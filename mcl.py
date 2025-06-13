@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GitHub Task Setup Script
+Claude Task Setup Script
 
 This script automates the workflow of:
 1. Reading requirements from text input or GitHub issue URL
@@ -296,7 +296,7 @@ def main():
     parser.add_argument("--requirements", required=True, help="Requirements text, GitHub issue URL, or file path")
     parser.add_argument("--branch", help="Branch name (auto-generated if not provided)")
     parser.add_argument("--workspace", help="Workspace directory (default: current directory)")
-    parser.add_argument("--staging-dir", help="Staging directory for copied repos (default: ./staging)")
+    parser.add_argument("--staging-dir", help="Staging directory for copied repos (default: ~/.mcl/staging)")
     parser.add_argument("--instructions", help="Additional instructions for Claude Code")
     parser.add_argument("--continue-branch", action="store_true", help="Continue work on existing branch instead of creating new one")
     parser.add_argument("--no-clone", action="store_true", help="Skip cloning (repo already exists)")
@@ -313,9 +313,9 @@ def main():
         if args.workspace:
             workspace_path = Path(args.workspace).resolve()
         else:
-            # Default to staging subdirectory in current directory
-            current_dir = Path(os.getcwd()).resolve()
-            default_staging = current_dir / "staging"
+            # Default to ~/.mcl/staging directory
+            home_dir = Path.home()
+            default_staging = home_dir / ".mcl" / "staging"
             staging_dir = args.staging_dir or str(default_staging)
             
             workspace_path = Path(staging_dir).resolve()
@@ -325,9 +325,9 @@ def main():
         if args.workspace:
             workspace_path = Path(args.workspace).resolve()
         else:
-            # Default to staging subdirectory in current directory
-            current_dir = Path(os.getcwd()).resolve()
-            default_staging = current_dir / "staging"
+            # Default to ~/.mcl/staging directory
+            home_dir = Path.home()
+            default_staging = home_dir / ".mcl" / "staging"
             staging_dir = args.staging_dir or str(default_staging)
             
             workspace_path = Path(staging_dir).resolve()
