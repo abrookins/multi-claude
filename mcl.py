@@ -131,6 +131,29 @@ def is_git_url(repo_url):
     return repo_url.startswith(('http://', 'https://', 'git@', 'ssh://'))
 
 
+def generate_feature_summary(requirements):
+    """Generate a short feature summary from requirements for directory naming."""
+    # Extract first line or first sentence
+    first_line = requirements.split('\n')[0].strip()
+    if not first_line:
+        return "task"
+    
+    # Remove common prefixes and clean up
+    prefixes_to_remove = ['add ', 'implement ', 'create ', 'build ', 'fix ', 'update ', 'modify ', 'refactor ']
+    cleaned = first_line.lower()
+    for prefix in prefixes_to_remove:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):]
+            break
+    
+    # Extract key words (limit to 3-4 words)
+    words = re.sub(r'[^a-zA-Z0-9\s]', '', cleaned).split()[:4]
+    if not words:
+        return "task"
+    
+    return "-".join(words)
+
+
 def get_repo_name(repo_input):
     """Extract repository name from URL or local path."""
     if is_local_path(repo_input):
@@ -141,6 +164,13 @@ def get_repo_name(repo_input):
         if path.endswith('.git'):
             path = path[:-4]
         return path.split('/')[-1]
+
+
+def get_feature_repo_name(repo_input, requirements):
+    """Get repository name with feature summary appended."""
+    base_name = get_repo_name(repo_input)
+    feature_summary = generate_feature_summary(requirements)
+    return f"{base_name}-{feature_summary}"
 
 
 def get_unique_repo_path(base_path):
@@ -168,6 +198,14 @@ def copy_local_repo(source_path, dest_path, branch_name):
     
     print(f"Copying repository from {source_path} to {dest_path}")
     shutil.copytree(source_path, dest_path)
+    
+    # Remove virtual environment directories
+    venv_dirs = ['venv', 'env', '.venv']
+    for venv_dir in venv_dirs:
+        venv_path = dest_path / venv_dir
+        if venv_path.exists():
+            print(f"Removing virtual environment directory: {venv_path}")
+            shutil.rmtree(venv_path)
     
     # Check if there are any uncommitted changes and stash them
     status_result = run_command("git status --porcelain", cwd=dest_path)
@@ -295,17 +333,7 @@ def main():
             workspace_path = Path(staging_dir).resolve()
             workspace_path.mkdir(parents=True, exist_ok=True)
     
-    # Get repository name and determine unique path
-    repo_name = get_repo_name(args.repo)
-    base_repo_path = workspace_path / repo_name
-    repo_path = get_unique_repo_path(base_repo_path) if not args.continue_branch and not args.no_clone else base_repo_path
-    
-    print(f"Setting up task workflow...")
-    print(f"Repository: {args.repo}")
-    print(f"Workspace: {workspace_path}")
-    print(f"Repository path: {repo_path}")
-    
-    # Process requirements
+    # Process requirements first (needed for feature naming)
     if is_github_issue_url(args.requirements):
         print(f"Fetching GitHub issue: {args.requirements}")
         requirements = fetch_github_issue(args.requirements)
@@ -320,6 +348,18 @@ def main():
             sys.exit(1)
     else:
         requirements = args.requirements
+    
+    # Get repository name with feature summary and determine unique path
+    repo_name = get_repo_name(args.repo)
+    feature_repo_name = get_feature_repo_name(args.repo, requirements)
+    base_repo_path = workspace_path / feature_repo_name
+    repo_path = get_unique_repo_path(base_repo_path) if not args.continue_branch and not args.no_clone else base_repo_path
+    
+    print("Setting up task workflow...")
+    print(f"Repository: {args.repo}")
+    print(f"Workspace: {workspace_path}")
+    print(f"Repository path: {repo_path}")
+    print(f"Feature directory: {feature_repo_name}")
     
     # Generate branch name if not provided
     if args.branch:
@@ -448,7 +488,14 @@ Please review the current state and continue working on the task!"""
 **Branch:** {branch_name} (new branch)
 **Task Memory:** TASK_MEMORY.md (contains requirements and notes)
 
-Please start by reading the TASK_MEMORY.md file to understand the requirements, then begin working on the task. Remember to update TASK_MEMORY.md with your progress, decisions, and notes as you work."""
+**Important:** If this is a Python project, you should set up a virtual environment before starting work:
+1. Check the README or setup documentation for specific virtualenv instructions
+2. If no specific instructions exist, create a standard virtual environment:
+   - `python -m venv venv` (or `python3 -m venv venv`)
+   - Activate it: `source venv/bin/activate` (Linux/Mac) or `venv\\Scripts\\activate` (Windows)
+   - Install dependencies: `pip install -r requirements.txt` (if requirements.txt exists)
+
+Please start by reading the TASK_MEMORY.md file to understand the requirements, then set up the development environment as needed, and begin working on the task. Remember to update TASK_MEMORY.md with your progress, decisions, and notes as you work."""
             
             if args.instructions:
                 initial_prompt += f"""
@@ -475,11 +522,11 @@ Let's get started!"""
         except FileNotFoundError:
             print("Claude Code not found. Install it or start manually with: claude")
     else:
-        print(f"\nNext steps:")
+        print("\nNext steps:")
         print(f"1. cd {repo_path}")
-        print(f"2. Start Claude Code: claude")
-        print(f"3. Read TASK_MEMORY.md and begin working")
-        print(f"4. Update TASK_MEMORY.md as you progress")
+        print("2. Start Claude Code: claude")
+        print("3. Read TASK_MEMORY.md and begin working")
+        print("4. Update TASK_MEMORY.md as you progress")
 
 
 if __name__ == "__main__":
