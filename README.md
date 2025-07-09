@@ -1,6 +1,6 @@
 # Multi-Claude Task Setup Script
 
-A Python script that streamlines development workflows by setting up isolated workspaces for multiple features within the same repository. It handles repository setup, branch management, task tracking, and automatically launches Claude Code with contextual prompts.
+A Python script that streamlines development workflows by setting up isolated workspaces for multiple features for the same repository. It handles repository setup, branch management, task tracking, and automatically launches Claude Code with contextual prompts.
 
 ## Features
 
