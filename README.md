@@ -1,39 +1,40 @@
-# GitHub Task Setup Script
+# Multi-Claude Task Setup Script
 
-A Python script that automates the complete workflow for working on GitHub issues or tasks with Claude Code. It handles repository setup, branch management, task tracking, and automatically launches Claude Code with contextual prompts.
+A Python script that streamlines development workflows by setting up isolated workspaces for multiple features within the same repository. It handles repository setup, branch management, task tracking, and automatically launches Claude Code with contextual prompts.
 
 ## Features
 
-- **Repository Management**: Clone GitHub repositories or copy local directories
+- **Multi-Feature Workflow**: Work on multiple features for the same repository simultaneously in isolated workspaces
+- **Repository Management**: Clone remote repositories or copy local directories to staging areas
 - **Branch Handling**: Create new branches or continue work on existing ones  
 - **Task Tracking**: Creates and maintains `TASK_MEMORY.md` for progress tracking
-- **GitHub Integration**: Fetch requirements directly from GitHub issue URLs
+- **Flexible Requirements**: Support text input, GitHub issue URLs, or file-based requirements
 - **Claude Code Integration**: Automatically launches Claude Code with contextual prompts
 - **Local Repository Support**: Copy and reset local repos to staging directories
-- **Flexible Workflow**: Support for both new tasks and continuing existing work
+- **Workspace Isolation**: Each feature gets its own directory to prevent conflicts
 
 ## Requirements
 
 - Python 3.6+
 - Git
 - Claude Code CLI (optional, can be skipped with `--no-claude`)
-- GitHub token (optional, set `GITHUB_TOKEN` environment variable for private repos or higher rate limits)
+- GitHub token (optional, set `GITHUB_TOKEN` environment variable for GitHub issue integration or higher rate limits)
 
 ## Installation
 
 1. Download the script:
 ```bash
-curl -O https://raw.githubusercontent.com/your-repo/gh_task_setup.py
-chmod +x gh_task_setup.py
+curl -O https://raw.githubusercontent.com/your-repo/mcl.py
+chmod +x mcl.py
 ```
 
 2. Or clone this repository:
 ```bash
-git clone https://github.com/your-repo/claude-gh-setup.git
-cd claude-gh-setup
+git clone https://github.com/your-repo/multi-claude.git
+cd multi-claude
 ```
 
-3. (Optional) Set up GitHub authentication for private repos or higher rate limits:
+3. (Optional) Set up GitHub authentication for GitHub issue integration:
 ```bash
 export GITHUB_TOKEN=your_github_token_here
 ```
@@ -50,7 +51,7 @@ python mcl.py --repo REPO_URL_OR_PATH --requirements REQUIREMENTS [OPTIONS]
 - `--requirements`: Requirements text, GitHub issue URL, or file path (required)
 - `--branch`: Branch name (auto-generated if not provided)
 - `--workspace`: Workspace directory (default: current directory for URLs, staging directory for local paths)
-- `--staging-dir`: Staging directory for copied repos (default: ~/src/claude-gh)
+- `--staging-dir`: Staging directory for copied repos (default: ~/.mcl/staging)
 - `--instructions`: Additional instructions for Claude Code
 - `--continue-branch`: Continue work on existing branch instead of creating new one
 - `--no-clone`: Skip cloning (repo already exists)
@@ -58,7 +59,7 @@ python mcl.py --repo REPO_URL_OR_PATH --requirements REQUIREMENTS [OPTIONS]
 
 ## Examples
 
-### 1. Start New Task with Text Requirements
+### 1. Start New Feature with Text Requirements
 
 ```bash
 python mcl.py \
@@ -68,12 +69,12 @@ python mcl.py \
 ```
 
 **What it does:**
-- Clones the repository
+- Clones the repository to `~/.mcl/staging/myproject-add-user-authentication/`
 - Creates a new branch `feature/add-user-authentication`
 - Creates `TASK_MEMORY.md` with requirements
 - Launches Claude Code with setup context and instructions
 
-### 2. Start New Task from GitHub Issue
+### 2. Start New Feature from GitHub Issue
 
 ```bash
 python mcl.py \
@@ -83,6 +84,7 @@ python mcl.py \
 
 **What it does:**
 - Fetches issue details from GitHub API
+- Clones repository to isolated workspace directory
 - Creates branch based on issue title
 - Includes issue labels and description in task memory
 - Launches Claude Code with full issue context
@@ -104,7 +106,7 @@ python mcl.py \
 - Appends new session info to existing `TASK_MEMORY.md`
 - Launches Claude Code with continuation context and specific instructions
 
-### 4. Work with Existing Local Repository
+### 4. Work on Feature in Existing Local Repository
 
 ```bash
 python mcl.py \
@@ -152,7 +154,7 @@ python mcl.py \
 - Uses specific workspace directory
 - Provides detailed technical instructions
 
-### 7. Work with Local Repository (Copy & Reset)
+### 7. Work on Feature with Local Repository (Copy & Reset)
 
 ```bash
 python mcl.py \
@@ -167,7 +169,7 @@ python mcl.py \
 - Resets to main/master branch with latest changes
 - Creates new feature branch for the task
 
-### 8. Local Repository with Custom Staging Directory
+### 8. Local Repository Feature with Custom Staging Directory
 
 ```bash
 python mcl.py \
@@ -182,7 +184,7 @@ python mcl.py \
 - Preserves original repository unchanged
 - Sets up clean workspace for development
 
-### 9. Continue Work on Local Repository Copy
+### 9. Continue Feature Work on Local Repository Copy
 
 ```bash
 python mcl.py \
@@ -212,7 +214,7 @@ python mcl.py \
 - Includes entire file content in task memory
 - Perfect for complex, multi-section requirements
 
-### 11. Local Repository with File Requirements
+### 11. Local Repository Feature with File Requirements
 
 ```bash
 python mcl.py \
@@ -230,25 +232,27 @@ python mcl.py \
 
 The script handles two types of repository sources:
 
-### GitHub URLs (Remote Repositories)
-When you provide a GitHub URL (e.g., `https://github.com/user/repo`):
-- Repository is cloned to the workspace directory
-- Uses `--workspace` parameter or current directory
+### Remote Repository URLs
+When you provide a remote URL (e.g., `https://github.com/user/repo`):
+- Repository is cloned to the staging directory
+- Uses `--staging-dir` parameter or default `~/.mcl/staging`
 - Original repository remains untouched
 - Standard git clone workflow
+- Each feature gets its own isolated workspace
 
 ### Local Directories (Local Repositories)
 When you provide a local path (e.g., `./my-project` or `/Users/dev/project`):
 - Repository is **copied** to a staging directory 
-- Default staging directory: `~/src/claude-gh`
+- Default staging directory: `~/.mcl/staging`
 - Uncommitted changes are automatically stashed
 - Repository is reset to main/master branch with latest changes
 - Original repository remains completely untouched
-- Perfect for experimenting without affecting your main workspace
+- Perfect for experimenting with multiple features without affecting your main workspace
 
 ### Staging Directory Behavior
-- **Default**: `~/src/claude-gh` 
+- **Default**: `~/.mcl/staging` 
 - **Custom**: Use `--staging-dir` to specify different location
+- **Multi-Feature Support**: Each feature gets its own directory within staging (e.g., `myproject-add-auth`, `myproject-fix-bug`)
 - **Conflict Resolution**: If staging directory equals current directory, uses `staging/` subdirectory
 - **Workspace Override**: Use `--workspace` to override staging directory for local repos
 
@@ -270,7 +274,7 @@ The `--requirements` parameter supports three input types:
 ```
 - Automatically fetches issue title, description, and labels
 - Includes issue URL for reference
-- Perfect for tracking work against specific issues
+- Useful for tracking work against specific issues (optional integration)
 
 ### 3. File-based Requirements
 ```bash
