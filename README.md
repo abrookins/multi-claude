@@ -311,6 +311,7 @@ Implement a comprehensive user dashboard with the following components...
 The script creates and maintains a `TASK_MEMORY.md` file that serves as a persistent memory for your work:
 
 ### New Tasks
+Includes your requirements and any custom instructions, e.g.:
 ```markdown
 # Task Memory
 
@@ -352,7 +353,7 @@ Add user authentication with OAuth2 support
 
 ## Claude Code Integration
 
-When the script launches Claude Code, it provides rich context:
+When the script launches Claude Code, it provides rich context that includes referencing the TASK_MEMORY.md file and any custom instructions you provded, e.g.:
 
 ### For New Tasks:
 ```
