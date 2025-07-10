@@ -1,6 +1,6 @@
 # Multi-Claude Task Setup Script
 
-A Python script that streamlines development workflows by setting up isolated workspaces for multiple features within the same repository. It handles repository setup, branch management, task tracking, and automatically launches Claude Code with contextual prompts.
+A Python script that streamlines development workflows by setting up isolated workspaces for multiple features for the same repository. It handles repository setup, branch management, task tracking, and automatically launches Claude Code with contextual prompts.
 
 ## Features
 
@@ -403,6 +403,7 @@ Implement a comprehensive user dashboard with the following components...
 The script creates and maintains a `TASK_MEMORY.md` file that serves as a persistent memory for your work:
 
 ### New Tasks
+Includes your requirements and any custom instructions, e.g.:
 ```markdown
 # Task Memory
 
@@ -444,7 +445,7 @@ Add user authentication with OAuth2 support
 
 ## Claude Code Integration
 
-When the script launches Claude Code, it provides rich context:
+When the script launches Claude Code, it provides rich context that includes referencing the TASK_MEMORY.md file and any custom instructions you provded, e.g.:
 
 ### For New Tasks:
 ```
