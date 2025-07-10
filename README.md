@@ -41,28 +41,83 @@ export GITHUB_TOKEN=your_github_token_here
 
 ## Usage
 
+Multi-Claude has a clean command-line interface with subcommands:
+
 ```bash
-python mcl.py --repo REPO_URL_OR_PATH --requirements REQUIREMENTS [OPTIONS]
+mcl <command> [options]
 ```
 
-### Arguments
+### Available Commands
+
+**Start a new task workspace:**
+```bash
+mcl start --repo REPO_URL_OR_PATH --requirements REQUIREMENTS [OPTIONS]
+```
+
+**Start a new task workspace (backwards compatible):**
+```bash
+mcl --repo REPO_URL_OR_PATH --requirements REQUIREMENTS [OPTIONS]
+```
+
+**List existing staged tasks:**
+```bash
+mcl list [--staging-dir STAGING_DIR]
+```
+
+**Shell integration setup (recommended):**
+```bash
+# Add to your ~/.bashrc or ~/.zshrc:
+eval "$(mcl shell-init)"
+
+# Then use the mcl_cd function:
+mcl_cd        # List all staged tasks
+mcl_cd 1      # Change to task #1
+mcl_cd 3      # Change to task #3
+```
+
+**Manual directory change (alternative):**
+```bash
+# For bash/zsh:
+source <(mcl cd N)
+
+# For fish:
+mcl cd N | source
+```
+
+**Get help:**
+```bash
+mcl --help              # Main help
+mcl start --help        # Help for start command
+mcl list --help         # Help for list command
+```
+
+### Start Command Options
 
 - `--repo`: Repository URL to clone or local directory path (required)
 - `--requirements`: Requirements text, GitHub issue URL, or file path (required)
 - `--branch`: Branch name (auto-generated if not provided)
-- `--workspace`: Workspace directory (default: current directory for URLs, staging directory for local paths)
+- `--workspace`: Workspace directory
 - `--staging-dir`: Staging directory for copied repos (default: ~/.mcl/staging)
 - `--instructions`: Additional instructions for Claude Code
 - `--continue-branch`: Continue work on existing branch instead of creating new one
 - `--no-clone`: Skip cloning (repo already exists)
 - `--no-claude`: Skip starting Claude Code after setup
 
+### List Command Options
+
+- `--staging-dir`: Staging directory to list from (default: ~/.mcl/staging)
+
+### Other Commands
+
+- `mcl shell-init`: Output shell integration code for bash/zsh
+- `mcl cd N`: Output shell command to change directory to task N
+
 ## Examples
 
 ### 1. Start New Feature with Text Requirements
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/user/myproject \
   --requirements "Add user authentication with OAuth2 support" \
   --instructions "Use TypeScript and include comprehensive tests"
@@ -77,7 +132,7 @@ python mcl.py \
 ### 2. Start New Feature from GitHub Issue
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/user/myproject \
   --requirements https://github.com/user/myproject/issues/42
 ```
@@ -92,7 +147,7 @@ python mcl.py \
 ### 3. Continue Existing Work
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/user/myproject \
   --requirements https://github.com/user/myproject/issues/42 \
   --continue-branch \
@@ -109,7 +164,7 @@ python mcl.py \
 ### 4. Work on Feature in Existing Local Repository
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/user/myproject \
   --requirements "Fix performance issues in data processing" \
   --no-clone \
@@ -127,7 +182,7 @@ python mcl.py \
 ### 5. Setup Only (No Claude Code)
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/user/myproject \
   --requirements "Implement caching layer" \
   --no-claude
@@ -141,7 +196,7 @@ python mcl.py \
 ### 6. Custom Branch Name and Workspace
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/user/myproject \
   --requirements "Add Redis integration" \
   --branch "feature/redis-cache" \
@@ -157,7 +212,7 @@ python mcl.py \
 ### 7. Work on Feature with Local Repository (Copy & Reset)
 
 ```bash
-python mcl.py \
+mcl start \
   --repo ./my-local-project \
   --requirements "Refactor authentication module" \
   --instructions "Preserve existing user sessions during refactoring"
@@ -172,7 +227,7 @@ python mcl.py \
 ### 8. Local Repository Feature with Custom Staging Directory
 
 ```bash
-python mcl.py \
+mcl start \
   --repo /Users/dev/existing-project \
   --requirements "Implement new payment gateway" \
   --staging-dir /Users/dev/staging \
@@ -187,7 +242,7 @@ python mcl.py \
 ### 9. Continue Feature Work on Local Repository Copy
 
 ```bash
-python mcl.py \
+mcl start \
   --repo ./my-project \
   --requirements "Continue payment gateway implementation" \
   --continue-branch \
@@ -203,7 +258,7 @@ python mcl.py \
 ### 10. Requirements from File
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/user/myproject \
   --requirements ./task-requirements.txt \
   --instructions "Follow the detailed specifications in the requirements file"
@@ -217,7 +272,7 @@ python mcl.py \
 ### 11. Local Repository Feature with File Requirements
 
 ```bash
-python mcl.py \
+mcl start \
   --repo ./my-local-project \
   --requirements ./docs/feature-spec.md \
   --branch "feature/user-dashboard"
@@ -227,6 +282,43 @@ python mcl.py \
 - Copies local repository to staging directory
 - Reads requirements from markdown specification file
 - Sets up workspace with comprehensive requirements documentation
+
+### 12. List and Navigate Staged Tasks
+
+```bash
+# List all staged tasks
+mcl list
+```
+
+**Output:**
+```
+Tasks:
+------
+ 1. myproject-add-authentication
+ 2. myproject-fix-performance
+ 3. otherproject-new-feature
+
+Shell integration:
+- Use: mcl_cd N           (change to task N)
+- Or:  mcl cd N | source
+- Setup: Add 'eval "$(mcl shell-init)"' to your ~/.bashrc or ~/.zshrc
+```
+
+```bash
+# Shell integration setup (one-time)
+eval "$(mcl shell-init)" >> ~/.bashrc  # or ~/.zshrc
+
+# Then use the mcl_cd function:
+mcl_cd        # List tasks
+mcl_cd 1      # Change to task #1
+mcl_cd 3      # Change to task #3
+```
+
+**What it does:**
+- Lists all staged tasks in a simple format, sorted by last modification time (newest first)
+- Shows task names without clutter
+- Provides `mcl_cd` shell function with tab completion for easy navigation
+- Works with custom staging directories via `--staging-dir`
 
 ## Repository Types
 
@@ -398,7 +490,7 @@ Please review the current state and continue working on the task!
 
 1. **Morning: Start new feature**
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/company/api \
   --requirements https://github.com/company/api/issues/156 \
   --instructions "Focus on API design first, then implementation"
@@ -406,7 +498,7 @@ python mcl.py \
 
 2. **Afternoon: Continue after meeting**
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/company/api \
   --requirements https://github.com/company/api/issues/156 \
   --continue-branch \
@@ -417,7 +509,7 @@ python mcl.py \
 
 3. **Next day: Handle merge conflicts**
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/company/api \
   --requirements https://github.com/company/api/issues/156 \
   --continue-branch \
@@ -429,7 +521,7 @@ python mcl.py \
 ### Bug Fix Workflow
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/company/frontend \
   --requirements "Critical: Login page crashes on mobile Safari" \
   --branch "hotfix/mobile-safari-login" \
@@ -440,13 +532,13 @@ python mcl.py \
 
 ```bash
 # Start work on existing local project
-python mcl.py \
+mcl start \
   --repo ./my-local-project \
   --requirements "Add dark mode support" \
   --instructions "Ensure compatibility with existing themes"
 
 # Continue work later
-python mcl.py \
+mcl start \
   --repo ./my-local-project \
   --requirements "Continue dark mode implementation" \
   --continue-branch \
@@ -470,7 +562,7 @@ echo "# API Redesign Project
 - Implement circuit breaker pattern" > api-redesign-spec.md
 
 # Start project with file requirements
-python mcl.py \
+mcl start \
   --repo https://github.com/company/api \
   --requirements ./api-redesign-spec.md \
   --instructions "Start with the caching layer implementation"
@@ -479,7 +571,7 @@ python mcl.py \
 ### Code Review Follow-up
 
 ```bash
-python mcl.py \
+mcl start \
   --repo https://github.com/company/service \
   --requirements "Address code review feedback on PR #89" \
   --continue-branch \

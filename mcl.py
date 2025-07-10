@@ -290,20 +290,149 @@ def create_task_memory(requirements, repo_path, branch_name):
     return memory_file
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Setup GitHub task workflow")
-    parser.add_argument("--repo", required=True, help="Repository URL to clone or local directory path")
-    parser.add_argument("--requirements", required=True, help="Requirements text, GitHub issue URL, or file path")
-    parser.add_argument("--branch", help="Branch name (auto-generated if not provided)")
-    parser.add_argument("--workspace", help="Workspace directory (default: current directory)")
-    parser.add_argument("--staging-dir", help="Staging directory for copied repos (default: ~/.mcl/staging)")
-    parser.add_argument("--instructions", help="Additional instructions for Claude Code")
-    parser.add_argument("--continue-branch", action="store_true", help="Continue work on existing branch instead of creating new one")
-    parser.add_argument("--no-clone", action="store_true", help="Skip cloning (repo already exists)")
-    parser.add_argument("--no-claude", action="store_true", help="Skip starting Claude Code after setup")
+def list_staged_directories(staging_dir=None):
+    """List staged tasks in a simple table format."""
+    from datetime import datetime
     
-    args = parser.parse_args()
+    # Get staging directory
+    if staging_dir is None:
+        home_dir = Path.home()
+        staging_dir = home_dir / ".mcl" / "staging"
+    else:
+        staging_dir = Path(staging_dir)
     
+    if not staging_dir.exists():
+        print(f"Staging directory {staging_dir} does not exist.")
+        return
+    
+    # Find all directories in staging
+    staged_dirs = []
+    for item in staging_dir.iterdir():
+        if item.is_dir():
+            # Get last modified time for sorting
+            mtime = item.stat().st_mtime
+            dir_name = item.name
+            
+            staged_dirs.append({
+                'name': dir_name,
+                'path': str(item),
+                'mtime': mtime
+            })
+    
+    if not staged_dirs:
+        print("No tasks found.")
+        return
+    
+    # Sort by modification time (newest first)
+    staged_dirs.sort(key=lambda x: x['mtime'], reverse=True)
+    
+    # Simple table format
+    print("Tasks:")
+    print("------")
+    for i, dir_info in enumerate(staged_dirs, 1):
+        print(f"{i:2d}. {dir_info['name']}")
+    
+    print()
+    print("Shell integration:")
+    print("- Use: mcl_cd N           (change to task N)")
+    print("- Or:  mcl cd N | source")
+    print("- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc")
+    print()
+    
+    return staged_dirs
+
+
+def handle_cd_command(staging_dir, selection):
+    """Handle the --cd command for shell integration."""
+    # Get staging directory
+    if staging_dir is None:
+        home_dir = Path.home()
+        staging_dir = home_dir / ".mcl" / "staging"
+    else:
+        staging_dir = Path(staging_dir)
+    
+    if not staging_dir.exists():
+        print("echo 'No tasks found - staging directory does not exist'", file=sys.stderr)
+        sys.exit(1)
+    
+    # Find all directories in staging
+    staged_dirs = []
+    for item in staging_dir.iterdir():
+        if item.is_dir():
+            mtime = item.stat().st_mtime
+            staged_dirs.append({
+                'name': item.name,
+                'path': str(item),
+                'mtime': mtime
+            })
+    
+    if not staged_dirs:
+        print("echo 'No tasks found'", file=sys.stderr)
+        sys.exit(1)
+    
+    # Sort by modification time (newest first)
+    staged_dirs.sort(key=lambda x: x['mtime'], reverse=True)
+    
+    try:
+        index = int(selection) - 1
+        if 0 <= index < len(staged_dirs):
+            selected_dir = staged_dirs[index]
+            # Output shell command to change directory
+            print(f"cd '{selected_dir['path']}'")
+        else:
+            print("echo 'Invalid selection'", file=sys.stderr)
+            sys.exit(1)
+    except ValueError:
+        print("echo 'Invalid selection - must be a number'", file=sys.stderr)
+        sys.exit(1)
+
+
+def generate_shell_integration():
+    """Generate shell integration code for bash/zsh."""
+    # Get the absolute path to this script
+    script_path = os.path.abspath(__file__)
+    
+    shell_code = f'''
+# Multi-Claude (mcl) shell integration
+# Add this to your ~/.bashrc or ~/.zshrc: eval "$(python {script_path} shell-init)"
+
+mcl_cd() {{
+    if [[ $# -eq 0 ]]; then
+        # No arguments - show list
+        python "{script_path}" list
+    else
+        # Change to task by number
+        local dir_command=$(python "{script_path}" cd "$1")
+        if [[ $? -eq 0 ]] && [[ -n "$dir_command" ]]; then
+            eval "$dir_command"
+        fi
+    fi
+}}
+
+# Autocomplete for mcl_cd
+_mcl_cd_complete() {{
+    local cur="${{COMP_WORDS[COMP_CWORD]}}"
+    local staging_dir="$HOME/.mcl/staging"
+    
+    if [[ -d "$staging_dir" ]]; then
+        local count=$(find "$staging_dir" -maxdepth 1 -type d | wc -l)
+        count=$((count - 1))  # Subtract 1 for the staging directory itself
+        
+        if [[ $count -gt 0 ]]; then
+            COMPREPLY=($(compgen -W "$(seq 1 $count)" -- "$cur"))
+        fi
+    fi
+}}
+
+# Register completion for bash
+if [[ -n "$BASH_VERSION" ]]; then
+    complete -F _mcl_cd_complete mcl_cd
+fi'''
+    return shell_code.strip()
+
+
+def cmd_start(args):
+    """Handle the 'start' subcommand - create a new task workspace."""
     # Determine if we're working with a local repo or URL
     is_local = is_local_path(args.repo)
     
@@ -527,6 +656,104 @@ Let's get started!"""
         print("2. Start Claude Code: claude")
         print("3. Read TASK_MEMORY.md and begin working")
         print("4. Update TASK_MEMORY.md as you progress")
+
+
+def cmd_list(args):
+    """Handle the 'list' subcommand - list all staged tasks."""
+    list_staged_directories(args.staging_dir)
+
+
+def cmd_shell_init(args):
+    """Handle the 'shell-init' subcommand - output shell integration code."""
+    print(generate_shell_integration())
+
+
+def cmd_cd(args):
+    """Handle the 'cd' subcommand - output shell command to change directory."""
+    handle_cd_command(args.staging_dir, args.number)
+
+
+def main():
+    """Main CLI entry point with subcommands."""
+    parser = argparse.ArgumentParser(
+        prog='mcl',
+        description='Multi-Claude task management - work on multiple features simultaneously',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  mcl start --repo https://github.com/user/repo --requirements "Add auth"
+  mcl --repo https://github.com/user/repo --requirements "Add auth"  # (backwards compatible)
+  mcl list
+  mcl cd 1
+  mcl shell-init
+
+For shell integration, add this to your ~/.bashrc or ~/.zshrc:
+  eval "$(mcl shell-init)"
+  
+Then use:
+  mcl_cd        # List tasks
+  mcl_cd 1      # Change to task 1
+        '''
+    )
+    
+    # Add backwards compatibility arguments to main parser
+    parser.add_argument('--repo', help='Repository URL to clone or local directory path')
+    parser.add_argument('--requirements', help='Requirements text, GitHub issue URL, or file path')
+    parser.add_argument('--branch', help='Branch name (auto-generated if not provided)')
+    parser.add_argument('--workspace', help='Workspace directory')
+    parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    parser.add_argument('--instructions', help='Additional instructions for Claude Code')
+    parser.add_argument('--continue-branch', action='store_true',
+                        help='Continue work on existing branch instead of creating new one')
+    parser.add_argument('--no-clone', action='store_true', help='Skip cloning (repo already exists)')
+    parser.add_argument('--no-claude', action='store_true', help='Skip starting Claude Code after setup')
+    
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Start subcommand
+    start_parser = subparsers.add_parser('start', help='Start a new task workspace')
+    start_parser.add_argument('--repo', required=True, 
+                             help='Repository URL to clone or local directory path')
+    start_parser.add_argument('--requirements', required=True,
+                             help='Requirements text, GitHub issue URL, or file path')
+    start_parser.add_argument('--branch', help='Branch name (auto-generated if not provided)')
+    start_parser.add_argument('--workspace', help='Workspace directory')
+    start_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    start_parser.add_argument('--instructions', help='Additional instructions for Claude Code')
+    start_parser.add_argument('--continue-branch', action='store_true',
+                             help='Continue work on existing branch instead of creating new one')
+    start_parser.add_argument('--no-clone', action='store_true', help='Skip cloning (repo already exists)')
+    start_parser.add_argument('--no-claude', action='store_true', help='Skip starting Claude Code after setup')
+    start_parser.set_defaults(func=cmd_start)
+    
+    # List subcommand
+    list_parser = subparsers.add_parser('list', help='List all staged tasks')
+    list_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    list_parser.set_defaults(func=cmd_list)
+    
+    # Shell-init subcommand
+    shell_parser = subparsers.add_parser('shell-init', help='Output shell integration code for bash/zsh')
+    shell_parser.set_defaults(func=cmd_shell_init)
+    
+    # CD subcommand (for shell integration)
+    cd_parser = subparsers.add_parser('cd', help='Output shell command to change directory to task N')
+    cd_parser.add_argument('number', help='Task number to change to')
+    cd_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    cd_parser.set_defaults(func=cmd_cd)
+    
+    args = parser.parse_args()
+    
+    # Backwards compatibility: if no subcommand but --repo and --requirements are provided, assume 'start'
+    if not args.command:
+        if args.repo and args.requirements:
+            # Redirect to start command
+            args.command = 'start'
+            args.func = cmd_start
+        else:
+            parser.print_help()
+            return
+    
+    args.func(args)
 
 
 if __name__ == "__main__":
