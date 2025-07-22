@@ -1,0 +1,33 @@
+[project]
+name = "multi-claude"
+version = "0.1.0"
+description = "Run multiple Claude Code instances in parallel"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "rich>=10.0.0",
+    "PyInquirer>=1.0.0"
+]
+authors = [
+    {name = "Andrew Brookins", email = "a.m.brookins@gmail.com"}
+]
+license = {text = "MIT"}
+keywords = ["claude", "ai", "development", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12"
+]
+
+[project.scripts]
+mcl = "mcl:main"
+
+[project.urls]
+Homepage = "https://github.com/abrookins/multi-claude"
+Repository = "https://github.com/abrookins/multi-claude"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"

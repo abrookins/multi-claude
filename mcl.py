@@ -6,8 +6,10 @@ This script automates the workflow of:
 1. Reading requirements from text input or GitHub issue URL
 2. Cloning a repository
 3. Creating a new branch
-4. Creating TASK_MEMORY.md with requirements and self-instructions
+4. Creating TASK_MEMORY.md with requirements and self-instructions (not committed to git)
 5. Setting up the workspace for development
+
+Note: TASK_MEMORY.md is excluded from version control via .gitignore to keep task notes local.
 
 Usage:
     python gh_task_setup.py --repo <repo_url> --requirements <text_or_issue_url>
@@ -663,11 +665,8 @@ def cmd_start(args):
         print("Creating TASK_MEMORY.md...")
         memory_file = create_task_memory(requirements, repo_path, branch_name)
     
-    # Add and commit TASK_MEMORY.md changes
-    print("Committing TASK_MEMORY.md changes...")
-    run_command("git add TASK_MEMORY.md", cwd=repo_path)
-    commit_msg = "Update TASK_MEMORY.md" if args.continue_branch else "Add TASK_MEMORY.md for task tracking"
-    run_command(f'git commit -m "{commit_msg}"', cwd=repo_path)
+    # Note: TASK_MEMORY.md is excluded from git via .gitignore to keep task notes local
+    print("TASK_MEMORY.md created (not committed - kept as local task notes)")
     
     print("\n" + "="*50)
     print("SETUP COMPLETE!")
