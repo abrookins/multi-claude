@@ -9,7 +9,8 @@
       "Bash(/usr/bin/python3:*)",
       "Bash(git add:*)",
       "Bash(git push:*)",
-      "Bash(mcl_cd:*)"
+      "Bash(mcl_cd:*)",
+      "Bash(pip install:*)"
     ],
     "deny": []
   }

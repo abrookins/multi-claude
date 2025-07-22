@@ -27,6 +27,22 @@ from urllib.parse import urlparse
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
+# Optional dependencies for enhanced UX
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+    from rich import box
+    HAS_RICH = True
+except ImportError:
+    HAS_RICH = False
+
+try:
+    from PyInquirer import prompt
+    HAS_PYINQUIRER = True
+except ImportError:
+    HAS_PYINQUIRER = False
+
 
 def run_command(cmd, cwd=None, capture_output=True):
     """Run a shell command and return the result."""
@@ -290,8 +306,8 @@ def create_task_memory(requirements, repo_path, branch_name):
     return memory_file
 
 
-def list_staged_directories(staging_dir=None):
-    """List staged tasks in a simple table format."""
+def list_staged_directories(staging_dir=None, interactive=True, show_output=True):
+    """List staged tasks with Rich formatting and optional interactive selection."""
     from datetime import datetime
     
     # Get staging directory
@@ -302,7 +318,11 @@ def list_staged_directories(staging_dir=None):
         staging_dir = Path(staging_dir)
     
     if not staging_dir.exists():
-        print(f"Staging directory {staging_dir} does not exist.")
+        if HAS_RICH:
+            console = Console()
+            console.print(f"[red]Staging directory {staging_dir} does not exist.[/red]")
+        else:
+            print(f"Staging directory {staging_dir} does not exist.")
         return
     
     # Find all directories in staging
@@ -316,28 +336,91 @@ def list_staged_directories(staging_dir=None):
             staged_dirs.append({
                 'name': dir_name,
                 'path': str(item),
-                'mtime': mtime
+                'mtime': mtime,
+                'modified': datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
             })
     
     if not staged_dirs:
-        print("No tasks found.")
+        if HAS_RICH:
+            console = Console()
+            console.print("[yellow]No tasks found.[/yellow]")
+        else:
+            print("No tasks found.")
         return
     
     # Sort by modification time (newest first)
     staged_dirs.sort(key=lambda x: x['mtime'], reverse=True)
     
-    # Simple table format
-    print("Tasks:")
-    print("------")
-    for i, dir_info in enumerate(staged_dirs, 1):
-        print(f"{i:2d}. {dir_info['name']}")
-    
-    print()
-    print("Shell integration:")
-    print("- Use: mcl_cd N           (change to task N)")
-    print("- Or:  mcl cd N | source")
-    print("- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc")
-    print()
+    # Display with Rich formatting if available
+    if HAS_RICH and show_output:
+        console = Console()
+        
+        # Create a beautiful table
+        table = Table(title="📁 Staged Tasks", box=box.ROUNDED)
+        table.add_column("#", style="cyan", width=3)
+        table.add_column("Task Name", style="green")
+        table.add_column("Last Modified", style="yellow")
+        
+        for i, dir_info in enumerate(staged_dirs, 1):
+            table.add_row(str(i), dir_info['name'], dir_info['modified'])
+        
+        console.print(table)
+        console.print()
+        
+    # Interactive selection if PyInquirer is available
+    if interactive and HAS_PYINQUIRER and len(staged_dirs) > 0:
+        choices = [f"{dir_info['name']} ({dir_info['modified']})" for dir_info in staged_dirs]
+        choices.append("❌ Cancel")
+        
+        questions = [
+            {
+                'type': 'list',
+                'name': 'selected_task',
+                'message': 'Select a task to navigate to:',
+                'choices': choices
+            }
+        ]
+        
+        try:
+            answer = prompt(questions)
+            if answer and 'selected_task' in answer:
+                selected = answer['selected_task']
+                if selected != "❌ Cancel":
+                    # Find the selected directory
+                    selected_name = selected.split(' (')[0]  # Remove the timestamp part
+                    for dir_info in staged_dirs:
+                        if dir_info['name'] == selected_name:
+                            if show_output and HAS_RICH:
+                                console.print(f"[green]Changing to:[/green] {dir_info['path']}")
+                            return dir_info['path']
+                else:
+                    if show_output and HAS_RICH:
+                        console.print("[yellow]Selection cancelled.[/yellow]")
+                    return None
+        except KeyboardInterrupt:
+            if show_output and HAS_RICH:
+                console.print("\n[yellow]Selection cancelled.[/yellow]")
+            return None
+    elif show_output:
+        # Show shell integration info only when displaying output
+        if HAS_RICH:
+            console.print("[dim]Shell integration:[/dim]")
+            console.print("[dim]- Use: mcl_cd N           (change to task N)[/dim]")
+            console.print("[dim]- Or:  mcl cd N | source[/dim]")
+            console.print("[dim]- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc[/dim]")
+        else:
+            # Fallback to simple format
+            print("Tasks:")
+            print("------")
+            for i, dir_info in enumerate(staged_dirs, 1):
+                print(f"{i:2d}. {dir_info['name']} ({dir_info['modified']})")
+            
+            print()
+            print("Shell integration:")
+            print("- Use: mcl_cd N           (change to task N)")
+            print("- Or:  mcl cd N | source")
+            print("- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc")
+            print()
     
     return staged_dirs
 
@@ -399,13 +482,21 @@ def generate_shell_integration():
 mcl_cd() {{
     if [[ $# -eq 0 ]]; then
         # No arguments - show list
-        python "{script_path}" list
+        python "{script_path}" ls
     else
         # Change to task by number
         local dir_command=$(python "{script_path}" cd "$1")
         if [[ $? -eq 0 ]] && [[ -n "$dir_command" ]]; then
             eval "$dir_command"
         fi
+    fi
+}}
+
+mcl_go() {{
+    # Interactive task selection
+    local dir_command=$(python "{script_path}" go)
+    if [[ $? -eq 0 ]] && [[ -n "$dir_command" ]]; then
+        eval "$dir_command"
     fi
 }}
 
@@ -660,7 +751,7 @@ Let's get started!"""
 
 def cmd_list(args):
     """Handle the 'list' subcommand - list all staged tasks."""
-    list_staged_directories(args.staging_dir)
+    list_staged_directories(args.staging_dir, interactive=False)
 
 
 def cmd_shell_init(args):
@@ -673,6 +764,57 @@ def cmd_cd(args):
     handle_cd_command(args.staging_dir, args.number)
 
 
+def cmd_go(args):
+    """Handle the 'go' subcommand - interactive task selection and navigation."""
+    if not HAS_PYINQUIRER:
+        if HAS_RICH:
+            console = Console(stderr=True)
+            console.print("[red]PyInquirer not installed. Install with:[/red]")
+            console.print("[yellow]pip install PyInquirer[/yellow]")
+            console.print("[dim]Falling back to numbered selection...[/dim]")
+        else:
+            print("PyInquirer not installed. Install with: pip install PyInquirer", file=sys.stderr)
+            print("Falling back to numbered selection...", file=sys.stderr)
+        
+        # Get the staged directories without showing output
+        staged_dirs = list_staged_directories(args.staging_dir, interactive=False, show_output=False)
+        
+        # Show list for reference
+        if HAS_RICH:
+            console = Console(stderr=True)
+            # Show a simple list for selection
+            for i, dir_info in enumerate(staged_dirs, 1):
+                console.print(f"{i:2d}. {dir_info['name']}")
+        else:
+            for i, dir_info in enumerate(staged_dirs, 1):
+                print(f"{i:2d}. {dir_info['name']}", file=sys.stderr)
+        if staged_dirs:
+            try:
+                print(f"\nEnter task number (1-{len(staged_dirs)}): ", end="", file=sys.stderr)
+                choice = input()
+                idx = int(choice) - 1
+                if 0 <= idx < len(staged_dirs):
+                    selected_path = staged_dirs[idx]['path']
+                    print(f"cd '{selected_path}'")
+                else:
+                    print("echo 'Invalid selection'", file=sys.stderr)
+                    sys.exit(1)
+            except (ValueError, KeyboardInterrupt):
+                print("echo 'Selection cancelled'", file=sys.stderr)
+                sys.exit(1)
+        else:
+            sys.exit(1)
+    else:
+        # Use interactive selection
+        selected_path = list_staged_directories(args.staging_dir, interactive=True, show_output=False)
+        if selected_path:
+            # Output shell command to change directory
+            print(f"cd '{selected_path}'")
+        else:
+            # Exit with error code so shell doesn't execute anything
+            sys.exit(1)
+
+
 def main():
     """Main CLI entry point with subcommands."""
     parser = argparse.ArgumentParser(
@@ -683,7 +825,8 @@ def main():
 Examples:
   mcl start --repo https://github.com/user/repo --requirements "Add auth"
   mcl --repo https://github.com/user/repo --requirements "Add auth"  # (backwards compatible)
-  mcl list
+  mcl ls
+  mcl go
   mcl cd 1
   mcl shell-init
 
@@ -693,6 +836,7 @@ For shell integration, add this to your ~/.bashrc or ~/.zshrc:
 Then use:
   mcl_cd        # List tasks
   mcl_cd 1      # Change to task 1
+  mcl_go        # Interactive task selection
         '''
     )
     
@@ -726,8 +870,13 @@ Then use:
     start_parser.add_argument('--no-claude', action='store_true', help='Skip starting Claude Code after setup')
     start_parser.set_defaults(func=cmd_start)
     
-    # List subcommand
-    list_parser = subparsers.add_parser('list', help='List all staged tasks')
+    # ls subcommand (primary)
+    ls_parser = subparsers.add_parser('ls', help='List all staged tasks')
+    ls_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    ls_parser.set_defaults(func=cmd_list)
+    
+    # list alias for backwards compatibility
+    list_parser = subparsers.add_parser('list', help='List all staged tasks (backwards compatibility alias for ls)')
     list_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
     list_parser.set_defaults(func=cmd_list)
     
@@ -740,6 +889,11 @@ Then use:
     cd_parser.add_argument('number', help='Task number to change to')
     cd_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
     cd_parser.set_defaults(func=cmd_cd)
+    
+    # Go subcommand (interactive selection)
+    go_parser = subparsers.add_parser('go', help='Interactively select and navigate to a task')
+    go_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    go_parser.set_defaults(func=cmd_go)
     
     args = parser.parse_args()
     
