@@ -5,9 +5,15 @@ description = "Run multiple Claude Code instances in parallel"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "rich>=10.0.0",
-    "PyInquirer>=1.0.0"
+    "rich>=10.0.0"
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0"
+]
+
 authors = [
     {name = "Andrew Brookins", email = "a.m.brookins@gmail.com"}
 ]
@@ -19,6 +25,22 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "unit: Unit tests with mocked dependencies",
+    "integration: Integration tests with real dependencies",
+    "slow: Tests that take more than a few seconds",
 ]
 
 [project.scripts]
