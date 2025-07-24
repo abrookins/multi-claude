@@ -39,11 +39,6 @@ try:
 except ImportError:
     HAS_RICH = False
 
-try:
-    from PyInquirer import prompt
-    HAS_PYINQUIRER = True
-except ImportError:
-    HAS_PYINQUIRER = False
 
 
 def run_command(cmd, cwd=None, capture_output=True):
@@ -204,8 +199,14 @@ def get_unique_repo_path(base_path):
         counter += 1
 
 
-def copy_local_repo(source_path, dest_path, branch_name):
-    """Copy local repository to destination and reset to main branch."""
+def is_git_repo(path):
+    """Check if a directory is a git repository."""
+    git_dir = Path(path) / '.git'
+    return git_dir.exists()
+
+
+def setup_local_repo(source_path, dest_path, branch_name):
+    """Set up local repository using git worktree if it's a git repo, otherwise copy."""
     import shutil
     
     # Find a unique destination path instead of overwriting
@@ -214,7 +215,73 @@ def copy_local_repo(source_path, dest_path, branch_name):
         print(f"Directory {dest_path} exists, using {unique_dest_path} instead")
         dest_path = unique_dest_path
     
-    print(f"Copying repository from {source_path} to {dest_path}")
+    # Check if source is a git repository
+    if is_git_repo(source_path):
+        print(f"Creating git worktree from {source_path} to {dest_path}")
+        return create_git_worktree(source_path, dest_path, branch_name)
+    else:
+        print(f"Source is not a git repository, copying directory from {source_path} to {dest_path}")
+        return copy_non_git_directory(source_path, dest_path, branch_name)
+
+
+def create_git_worktree(source_path, dest_path, branch_name):
+    """Create a git worktree from source repository."""
+    # First, ensure we're working from the main branch and have latest changes
+    original_cwd = Path.cwd()
+    
+    try:
+        # Work in the source repo to prepare it
+        print("Preparing source repository...")
+        
+        # Stash any uncommitted changes in source
+        status_result = run_command("git status --porcelain", cwd=source_path)
+        if status_result and status_result.strip():
+            print("Found uncommitted changes in source, stashing them...")
+            run_command("git stash push -m 'Auto-stash before worktree creation'", cwd=source_path)
+        
+        # Try to fetch latest changes if remote exists
+        remote_check = run_command("git remote", cwd=source_path)
+        if remote_check and remote_check.strip():
+            print("Fetching latest changes...")
+            run_command("git fetch origin", cwd=source_path)
+        
+        # Find and checkout main/master branch
+        main_branch = None
+        for branch in ['main', 'master']:
+            checkout_result = run_command(f"git checkout {branch}", cwd=source_path)
+            if checkout_result is not None:
+                main_branch = branch
+                print(f"Checked out {branch} branch in source repository")
+                break
+        
+        if not main_branch:
+            print("Warning: Could not find main or master branch, using current branch")
+            # Get current branch name
+            current_branch = run_command("git branch --show-current", cwd=source_path)
+            main_branch = current_branch.strip() if current_branch else "HEAD"
+        
+        # Create the worktree with new branch
+        print(f"Creating worktree with branch '{branch_name}'...")
+        worktree_result = run_command(f"git worktree add {dest_path} -b {branch_name}", cwd=source_path)
+        
+        if worktree_result is None:
+            print("Failed to create git worktree, falling back to directory copy")
+            return copy_non_git_directory(source_path, dest_path, branch_name)
+        
+        print(f"Successfully created git worktree at {dest_path}")
+        return True
+        
+    except Exception as e:
+        print(f"Error creating git worktree: {e}")
+        print("Falling back to directory copy")
+        return copy_non_git_directory(source_path, dest_path, branch_name)
+
+
+def copy_non_git_directory(source_path, dest_path, branch_name):
+    """Copy non-git directory or fallback copy method."""
+    import shutil
+    
+    print(f"Copying directory from {source_path} to {dest_path}")
     shutil.copytree(source_path, dest_path)
     
     # Remove virtual environment directories
@@ -225,47 +292,89 @@ def copy_local_repo(source_path, dest_path, branch_name):
             print(f"Removing virtual environment directory: {venv_path}")
             shutil.rmtree(venv_path)
     
-    # Check if there are any uncommitted changes and stash them
-    status_result = run_command("git status --porcelain", cwd=dest_path)
-    if status_result and status_result.strip():
-        print("Found uncommitted changes, stashing them...")
-        stash_result = run_command("git stash push -m 'Auto-stash before reset to main'", cwd=dest_path)
-        if stash_result is None:
-            print("Failed to stash changes, performing hard reset...")
-    
-    # Try to fetch latest changes if remote exists
-    remote_check = run_command("git remote", cwd=dest_path)
-    if remote_check and remote_check.strip():
-        print("Fetching latest changes...")
-        fetch_result = run_command("git fetch origin", cwd=dest_path)
-        has_remote = fetch_result is not None
-    else:
-        print("No remote repository configured, skipping fetch")
-        has_remote = False
-    
-    # Try to checkout main/master branch
-    for main_branch in ['main', 'master']:
-        print(f"Attempting to checkout {main_branch} branch...")
-        checkout_result = run_command(f"git checkout {main_branch}", cwd=dest_path)
-        if checkout_result is not None:
-            if has_remote:
-                # Reset to latest origin if we have a remote
-                reset_result = run_command(f"git reset --hard origin/{main_branch}", cwd=dest_path)
-                if reset_result is not None:
-                    print(f"Successfully reset to origin/{main_branch}")
-                    break
+    # If destination has .git, perform git operations
+    if is_git_repo(dest_path):
+        # Check if there are any uncommitted changes and stash them
+        status_result = run_command("git status --porcelain", cwd=dest_path)
+        if status_result and status_result.strip():
+            print("Found uncommitted changes, stashing them...")
+            stash_result = run_command("git stash push -m 'Auto-stash before reset to main'", cwd=dest_path)
+            if stash_result is None:
+                print("Failed to stash changes, performing hard reset...")
+        
+        # Try to fetch latest changes if remote exists
+        remote_check = run_command("git remote", cwd=dest_path)
+        if remote_check and remote_check.strip():
+            print("Fetching latest changes...")
+            fetch_result = run_command("git fetch origin", cwd=dest_path)
+            has_remote = fetch_result is not None
+        else:
+            print("No remote repository configured, skipping fetch")
+            has_remote = False
+        
+        # Try to checkout main/master branch
+        for main_branch in ['main', 'master']:
+            print(f"Attempting to checkout {main_branch} branch...")
+            checkout_result = run_command(f"git checkout {main_branch}", cwd=dest_path)
+            if checkout_result is not None:
+                if has_remote:
+                    # Reset to latest origin if we have a remote
+                    reset_result = run_command(f"git reset --hard origin/{main_branch}", cwd=dest_path)
+                    if reset_result is not None:
+                        print(f"Successfully reset to origin/{main_branch}")
+                        break
+                    else:
+                        print(f"Failed to reset to origin/{main_branch}, using local {main_branch}")
+                        break
                 else:
-                    print(f"Failed to reset to origin/{main_branch}, using local {main_branch}")
+                    print(f"Successfully checked out local {main_branch} branch")
                     break
             else:
-                print(f"Successfully checked out local {main_branch} branch")
-                break
+                print(f"Branch {main_branch} not found")
         else:
-            print(f"Branch {main_branch} not found")
-    else:
-        print("Warning: Could not find main or master branch, staying on current branch")
+            print("Warning: Could not find main or master branch, staying on current branch")
     
     return True
+
+
+# Maintain backward compatibility
+def copy_local_repo(source_path, dest_path, branch_name):
+    """Legacy function name - now delegates to setup_local_repo."""
+    return setup_local_repo(source_path, dest_path, branch_name)
+
+
+def cleanup_worktree(repo_path, source_path=None):
+    """Clean up git worktree if it exists."""
+    if not repo_path.exists():
+        return True
+    
+    # Check if this is a git worktree by looking for .git file (not directory)
+    git_file = repo_path / '.git'
+    if git_file.exists() and git_file.is_file():
+        try:
+            # Read the .git file to find the source repository
+            with open(git_file, 'r') as f:
+                git_content = f.read().strip()
+            
+            if git_content.startswith('gitdir: '):
+                print(f"Removing git worktree: {repo_path}")
+                # Use git worktree remove command
+                if source_path and is_git_repo(source_path):
+                    remove_result = run_command(f"git worktree remove {repo_path}", cwd=source_path)
+                    if remove_result is not None:
+                        print(f"Successfully removed worktree")
+                        return True
+                
+                # If that fails, remove manually and prune
+                import shutil
+                if repo_path.exists():
+                    shutil.rmtree(repo_path)
+                    print(f"Manually removed worktree directory")
+                return True
+        except Exception as e:
+            print(f"Error cleaning up worktree: {e}")
+    
+    return False
 
 
 def create_task_memory(requirements, repo_path, branch_name):
@@ -308,8 +417,8 @@ def create_task_memory(requirements, repo_path, branch_name):
     return memory_file
 
 
-def list_staged_directories(staging_dir=None, interactive=True, show_output=True):
-    """List staged tasks with Rich formatting and optional interactive selection."""
+def list_staged_directories(staging_dir=None):
+    """List staged tasks with Rich formatting."""
     from datetime import datetime
     
     # Get staging directory
@@ -354,7 +463,7 @@ def list_staged_directories(staging_dir=None, interactive=True, show_output=True
     staged_dirs.sort(key=lambda x: x['mtime'], reverse=True)
     
     # Display with Rich formatting if available
-    if HAS_RICH and show_output:
+    if HAS_RICH:
         console = Console()
         
         # Create a beautiful table
@@ -369,60 +478,25 @@ def list_staged_directories(staging_dir=None, interactive=True, show_output=True
         console.print(table)
         console.print()
         
-    # Interactive selection if PyInquirer is available
-    if interactive and HAS_PYINQUIRER and len(staged_dirs) > 0:
-        choices = [f"{dir_info['name']} ({dir_info['modified']})" for dir_info in staged_dirs]
-        choices.append("❌ Cancel")
+    # Show shell integration info
+    if HAS_RICH:
+        console.print("[dim]Shell integration:[/dim]")
+        console.print("[dim]- Use: mcl_cd N              (change to task N)[/dim]")
+        console.print("[dim]- Or:  eval \"$(mcl cd N)\"    (manual method)[/dim]")
+        console.print("[dim]- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc[/dim]")
+    else:
+        # Fallback to simple format
+        print("Tasks:")
+        print("------")
+        for i, dir_info in enumerate(staged_dirs, 1):
+            print(f"{i:2d}. {dir_info['name']} ({dir_info['modified']})")
         
-        questions = [
-            {
-                'type': 'list',
-                'name': 'selected_task',
-                'message': 'Select a task to navigate to:',
-                'choices': choices
-            }
-        ]
-        
-        try:
-            answer = prompt(questions)
-            if answer and 'selected_task' in answer:
-                selected = answer['selected_task']
-                if selected != "❌ Cancel":
-                    # Find the selected directory
-                    selected_name = selected.split(' (')[0]  # Remove the timestamp part
-                    for dir_info in staged_dirs:
-                        if dir_info['name'] == selected_name:
-                            if show_output and HAS_RICH:
-                                console.print(f"[green]Changing to:[/green] {dir_info['path']}")
-                            return dir_info['path']
-                else:
-                    if show_output and HAS_RICH:
-                        console.print("[yellow]Selection cancelled.[/yellow]")
-                    return None
-        except KeyboardInterrupt:
-            if show_output and HAS_RICH:
-                console.print("\n[yellow]Selection cancelled.[/yellow]")
-            return None
-    elif show_output:
-        # Show shell integration info only when displaying output
-        if HAS_RICH:
-            console.print("[dim]Shell integration:[/dim]")
-            console.print("[dim]- Use: mcl_cd N           (change to task N)[/dim]")
-            console.print("[dim]- Or:  mcl cd N | source[/dim]")
-            console.print("[dim]- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc[/dim]")
-        else:
-            # Fallback to simple format
-            print("Tasks:")
-            print("------")
-            for i, dir_info in enumerate(staged_dirs, 1):
-                print(f"{i:2d}. {dir_info['name']} ({dir_info['modified']})")
-            
-            print()
-            print("Shell integration:")
-            print("- Use: mcl_cd N           (change to task N)")
-            print("- Or:  mcl cd N | source")
-            print("- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc")
-            print()
+        print()
+        print("Shell integration:")
+        print("- Use: mcl_cd N              (change to task N)")
+        print("- Or:  eval \"$(mcl cd N)\"    (manual method)")
+        print("- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc")
+        print()
     
     return staged_dirs
 
@@ -462,8 +536,9 @@ def handle_cd_command(staging_dir, selection):
         index = int(selection) - 1
         if 0 <= index < len(staged_dirs):
             selected_dir = staged_dirs[index]
-            # Output shell command to change directory
-            print(f"cd '{selected_dir['path']}'")
+            # Output shell command to change directory - use proper shell escaping
+            import shlex
+            print(f"cd {shlex.quote(selected_dir['path'])}")
         else:
             print("echo 'Invalid selection'", file=sys.stderr)
             sys.exit(1)
@@ -494,13 +569,6 @@ mcl_cd() {{
     fi
 }}
 
-mcl_go() {{
-    # Interactive task selection
-    local dir_command=$(python "{script_path}" go)
-    if [[ $? -eq 0 ]] && [[ -n "$dir_command" ]]; then
-        eval "$dir_command"
-    fi
-}}
 
 # Autocomplete for mcl_cd
 _mcl_cd_complete() {{
@@ -629,23 +697,31 @@ def cmd_start(args):
             print(f"Repository path {repo_path} does not exist and --no-clone specified")
             sys.exit(1)
     
-    # Handle branch creation/checkout
-    if args.continue_branch:
-        print(f"Checking out existing branch '{branch_name}'...")
-        # Try to checkout existing branch, create if it doesn't exist
-        checkout_result = run_command(f"git checkout {branch_name}", cwd=repo_path)
-        if checkout_result is None:
-            print(f"Branch '{branch_name}' not found, creating new branch...")
+    # Handle branch creation/checkout (skip if worktree already created the branch)
+    current_branch_result = run_command("git branch --show-current", cwd=repo_path)
+    current_branch = current_branch_result.strip() if current_branch_result else ""
+    
+    # Only handle branch operations if we're not already on the target branch
+    # (worktrees automatically create and checkout the branch)
+    if current_branch != branch_name:
+        if args.continue_branch:
+            print(f"Checking out existing branch '{branch_name}'...")
+            # Try to checkout existing branch, create if it doesn't exist
+            checkout_result = run_command(f"git checkout {branch_name}", cwd=repo_path)
+            if checkout_result is None:
+                print(f"Branch '{branch_name}' not found, creating new branch...")
+                checkout_result = run_command(f"git checkout -b {branch_name}", cwd=repo_path)
+                if checkout_result is None:
+                    print("Failed to create branch")
+                    sys.exit(1)
+        else:
+            print(f"Creating new branch '{branch_name}'...")
             checkout_result = run_command(f"git checkout -b {branch_name}", cwd=repo_path)
             if checkout_result is None:
                 print("Failed to create branch")
                 sys.exit(1)
     else:
-        print(f"Creating new branch '{branch_name}'...")
-        checkout_result = run_command(f"git checkout -b {branch_name}", cwd=repo_path)
-        if checkout_result is None:
-            print("Failed to create branch")
-            sys.exit(1)
+        print(f"Already on branch '{branch_name}'")
     
     # Create or update TASK_MEMORY.md
     memory_file = os.path.join(repo_path, "TASK_MEMORY.md")
@@ -750,7 +826,7 @@ Let's get started!"""
 
 def cmd_list(args):
     """Handle the 'list' subcommand - list all staged tasks."""
-    list_staged_directories(args.staging_dir, interactive=False)
+    list_staged_directories(args.staging_dir)
 
 
 def cmd_shell_init(args):
@@ -763,55 +839,6 @@ def cmd_cd(args):
     handle_cd_command(args.staging_dir, args.number)
 
 
-def cmd_go(args):
-    """Handle the 'go' subcommand - interactive task selection and navigation."""
-    if not HAS_PYINQUIRER:
-        if HAS_RICH:
-            console = Console(stderr=True)
-            console.print("[red]PyInquirer not installed. Install with:[/red]")
-            console.print("[yellow]pip install PyInquirer[/yellow]")
-            console.print("[dim]Falling back to numbered selection...[/dim]")
-        else:
-            print("PyInquirer not installed. Install with: pip install PyInquirer", file=sys.stderr)
-            print("Falling back to numbered selection...", file=sys.stderr)
-        
-        # Get the staged directories without showing output
-        staged_dirs = list_staged_directories(args.staging_dir, interactive=False, show_output=False)
-        
-        # Show list for reference
-        if HAS_RICH:
-            console = Console(stderr=True)
-            # Show a simple list for selection
-            for i, dir_info in enumerate(staged_dirs, 1):
-                console.print(f"{i:2d}. {dir_info['name']}")
-        else:
-            for i, dir_info in enumerate(staged_dirs, 1):
-                print(f"{i:2d}. {dir_info['name']}", file=sys.stderr)
-        if staged_dirs:
-            try:
-                print(f"\nEnter task number (1-{len(staged_dirs)}): ", end="", file=sys.stderr)
-                choice = input()
-                idx = int(choice) - 1
-                if 0 <= idx < len(staged_dirs):
-                    selected_path = staged_dirs[idx]['path']
-                    print(f"cd '{selected_path}'")
-                else:
-                    print("echo 'Invalid selection'", file=sys.stderr)
-                    sys.exit(1)
-            except (ValueError, KeyboardInterrupt):
-                print("echo 'Selection cancelled'", file=sys.stderr)
-                sys.exit(1)
-        else:
-            sys.exit(1)
-    else:
-        # Use interactive selection
-        selected_path = list_staged_directories(args.staging_dir, interactive=True, show_output=False)
-        if selected_path:
-            # Output shell command to change directory
-            print(f"cd '{selected_path}'")
-        else:
-            # Exit with error code so shell doesn't execute anything
-            sys.exit(1)
 
 
 def main():
@@ -825,8 +852,7 @@ Examples:
   mcl start --repo https://github.com/user/repo --requirements "Add auth"
   mcl --repo https://github.com/user/repo --requirements "Add auth"  # (backwards compatible)
   mcl ls
-  mcl go
-  mcl cd 1
+  eval "$(mcl cd 1)"    # Change to task 1 (manual method)
   mcl shell-init
 
 For shell integration, add this to your ~/.bashrc or ~/.zshrc:
@@ -834,8 +860,7 @@ For shell integration, add this to your ~/.bashrc or ~/.zshrc:
   
 Then use:
   mcl_cd        # List tasks
-  mcl_cd 1      # Change to task 1
-  mcl_go        # Interactive task selection
+  mcl_cd 1      # Change to task 1 (recommended)
         '''
     )
     
@@ -889,10 +914,6 @@ Then use:
     cd_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
     cd_parser.set_defaults(func=cmd_cd)
     
-    # Go subcommand (interactive selection)
-    go_parser = subparsers.add_parser('go', help='Interactively select and navigate to a task')
-    go_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
-    go_parser.set_defaults(func=cmd_go)
     
     args = parser.parse_args()
     
