@@ -4,6 +4,7 @@ A Python script that streamlines development workflows by setting up isolated wo
 
 ## Features
 
+### Core Task Management
 - **Multi-Feature Workflow**: Work on multiple features for the same repository simultaneously in isolated workspaces
 - **Repository Management**: Clone remote repositories or copy local directories to staging areas
 - **Branch Handling**: Create new branches or continue work on existing ones  
@@ -12,6 +13,15 @@ A Python script that streamlines development workflows by setting up isolated wo
 - **Claude Code Integration**: Automatically launches Claude Code with contextual prompts
 - **Local Repository Support**: Copy and reset local repos to staging directories
 - **Workspace Isolation**: Each feature gets its own directory to prevent conflicts
+
+### Multi-Agent Manager (NEW)
+- **Supervised Multi-Agent System**: Manage multiple Claude Code agents working simultaneously
+- **Automated Approval Workflows**: LLM-based evaluation of agent tool requests
+- **Risk Assessment**: Auto-approve safe operations, escalate risky ones to user
+- **Centralized Task Management**: Submit, monitor, and control multiple tasks from one interface
+- **Priority & Budget Management**: Assign priority levels and budget limits to tasks
+- **Persistent State**: Agents and approvals survive manager restarts
+- **macOS Notifications**: Get alerted when agent approval is needed
 
 ## Requirements
 
@@ -49,6 +59,8 @@ mcl <command> [options]
 
 ### Available Commands
 
+#### Core Task Management
+
 **Start a new task workspace:**
 ```bash
 mcl start --repo REPO_URL_OR_PATH --requirements REQUIREMENTS [OPTIONS]
@@ -75,20 +87,42 @@ mcl_cd 1      # Change to task #1
 mcl_cd 3      # Change to task #3
 ```
 
-**Manual directory change (alternative):**
-```bash
-# For bash/zsh:
-source <(mcl cd N)
+#### Multi-Agent Manager
 
-# For fish:
-mcl cd N | source
+**Start the manager daemon:**
+```bash
+mcl manager start
+```
+
+**Submit tasks to the manager:**
+```bash
+mcl manager add "Fix Redis timeout bug" --repo ~/api-service
+mcl manager add "Add dark mode toggle" --repo ~/frontend --priority high --budget 150
+```
+
+**Monitor agent status:**
+```bash
+mcl manager status      # Show active agents
+mcl manager queue       # Show pending approvals
+```
+
+**Handle approvals:**
+```bash
+mcl manager approve 1   # Approve request #1
+mcl manager deny 2      # Deny request #2
+```
+
+**Stop the manager:**
+```bash
+mcl manager stop
 ```
 
 **Get help:**
 ```bash
 mcl --help              # Main help
 mcl start --help        # Help for start command
-mcl list --help         # Help for list command
+mcl manager --help      # Help for manager commands
+mcl manager add --help  # Help for specific manager command
 ```
 
 ### Start Command Options
@@ -632,6 +666,28 @@ Directory /path/to/repo already exists. Removing...
 fatal: A branch named 'feature/...' already exists
 ```
 **Solution**: Use `--continue-branch` to work with existing branches, or specify a different `--branch` name
+
+## Documentation
+
+### Manager Documentation
+For detailed information about the Multi-Agent Manager system:
+
+- **[Manager User Guide](docs/MANAGER.md)** - Complete usage guide with examples
+- **[Manager Quick Reference](docs/MANAGER_QUICK_REFERENCE.md)** - Command reference and common workflows  
+- **[Manager Advanced Guide](docs/MANAGER_ADVANCED.md)** - Architecture, customization, and power user features
+
+### Testing
+The project includes a comprehensive test suite:
+
+```bash
+# Run all tests
+python -m pytest tests/ -v
+
+# Run specific test categories
+python -m pytest tests/test_manager.py -v      # Manager functionality
+python -m pytest tests/test_unit.py -v        # Core MCL functionality
+python -m pytest tests/test_agent_spawning.py -v  # Agent process tests
+```
 
 ## License
 

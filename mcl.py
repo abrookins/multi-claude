@@ -23,6 +23,11 @@ import os
 import re
 import subprocess
 import sys
+import time
+import asyncio
+import socket
+import sqlite3
+import uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -629,6 +634,1031 @@ fi'''
     return shell_code.strip()
 
 
+# Manager functionality
+class ManagerDaemon:
+    """Daemon process that manages multiple Claude Code agents."""
+    
+    def __init__(self, manager_dir=None):
+        self.manager_dir = Path(manager_dir or Path.home() / ".mcl" / "manager")
+        self.agents_dir = self.manager_dir / "agents"
+        self.db_path = self.manager_dir / "manager.db"
+        self.socket_path = "/tmp/mcl_manager.sock"
+        self.state_file = self.manager_dir / "state.json"
+        self.running = False
+        
+        # Ensure directories exist
+        self.manager_dir.mkdir(parents=True, exist_ok=True)
+        self.agents_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize database
+        self._init_db()
+    
+    def _init_db(self):
+        """Initialize SQLite database for manager state."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                task_description TEXT NOT NULL,
+                repo_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                priority TEXT DEFAULT 'normal',
+                budget INTEGER DEFAULT 100
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS approval_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                request_type TEXT NOT NULL,
+                request_data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (agent_id) REFERENCES agents (id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS manager_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                request_data TEXT NOT NULL,
+                decision TEXT NOT NULL,  -- 'approve', 'deny', 'escalate'
+                confidence_score REAL NOT NULL,  -- 0.0 to 1.0
+                autonomy_level TEXT NOT NULL,  -- 'conservative', 'balanced', 'aggressive'
+                model_used TEXT NOT NULL,  -- 'gpt-4o', 'claude-3.5-sonnet', etc.
+                user_feedback TEXT,  -- 'correct', 'incorrect', null
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (agent_id) REFERENCES agents (id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS manager_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS interaction_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                interaction_type TEXT NOT NULL,  -- 'agent_request', 'manager_response', 'agent_output', 'system_event'
+                direction TEXT NOT NULL,  -- 'agent_to_manager', 'manager_to_agent', 'system'
+                content TEXT NOT NULL,
+                metadata TEXT,  -- JSON metadata
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (agent_id) REFERENCES agents (id)
+            )
+        """)
+        conn.commit()
+        conn.close()
+    
+    def spawn_agent(self, task_description, repo_path, priority="normal", budget=100):
+        """Spawn a new Claude Code agent for a task."""
+        # Validate inputs
+        if task_description is None:
+            raise TypeError("Task description cannot be None")
+        if not task_description or not task_description.strip():
+            raise ValueError("Task description cannot be empty")
+        
+        agent_id = str(uuid.uuid4())[:8]
+        agent_dir = self.agents_dir / agent_id
+        agent_dir.mkdir(exist_ok=True)
+        
+        # Create task memory file
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        task_memory_content = f"""# Task Memory - Agent {agent_id}
+
+**Created:** {timestamp}
+**Priority:** {priority}
+**Budget:** ${budget}
+**Repository:** {repo_path}
+
+## Task Description
+
+{task_description}
+
+## Manager Context
+
+This agent is running under manager supervision:
+- Auto-approval enabled for low-risk operations
+- Manager will evaluate tool requests before execution
+- Escalation triggers: high cost operations, destructive changes, external API calls
+
+## Progress
+
+- [ ] Initial codebase analysis
+- [ ] Implementation planning  
+- [ ] Code changes
+- [ ] Testing verification
+
+## Work Log
+
+- [{timestamp}] Agent spawned under manager supervision
+
+---
+
+*This agent is managed by the mcl manager daemon. All tool requests are evaluated before execution.*
+"""
+        
+        task_memory_path = agent_dir / "TASK_MEMORY.md"
+        with open(task_memory_path, "w") as f:
+            f.write(task_memory_content)
+        
+        # Store agent in database
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO agents (id, task_description, repo_path, status, priority, budget) VALUES (?, ?, ?, ?, ?, ?)",
+            (agent_id, task_description, repo_path, "active", priority, budget)
+        )
+        conn.commit()
+        conn.close()
+        
+        # Initialize logging for this agent
+        session_id = f"session_{int(time.time())}"
+        self.log_interaction(
+            agent_id=agent_id,
+            session_id=session_id,
+            interaction_type="system_event",
+            direction="system",
+            content=f"Agent spawned for task: {task_description}",
+            metadata={
+                "repo_path": repo_path,
+                "priority": priority,
+                "budget": budget,
+                "agent_dir": str(agent_dir)
+            }
+        )
+        
+        print(f"✅ Agent {agent_id} spawned for task: {task_description[:50]}...")
+        return agent_id, session_id
+    
+    def get_active_agents(self):
+        """Get list of active agents."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute(
+            "SELECT id, task_description, repo_path, status, priority, created_at FROM agents WHERE status = 'active'"
+        )
+        agents = cursor.fetchall()
+        conn.close()
+        return agents
+    
+    def get_approval_queue(self):
+        """Get pending approval requests."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute("""
+            SELECT aq.id, aq.agent_id, aq.request_type, aq.request_data, aq.created_at, a.task_description
+            FROM approval_queue aq
+            JOIN agents a ON aq.agent_id = a.id
+            ORDER BY aq.created_at
+        """)
+        queue = cursor.fetchall()
+        conn.close()
+        return queue
+    
+    def get_autonomy_level(self):
+        """Get current autonomy level."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute("SELECT value FROM manager_config WHERE key = 'autonomy_level'")
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else "balanced"  # Default to balanced
+    
+    def set_autonomy_level(self, level):
+        """Set autonomy level: conservative, balanced, aggressive."""
+        if level not in ["conservative", "balanced", "aggressive"]:
+            raise ValueError("Autonomy level must be: conservative, balanced, or aggressive")
+        
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT OR REPLACE INTO manager_config (key, value) VALUES (?, ?)",
+            ("autonomy_level", level)
+        )
+        conn.commit()
+        conn.close()
+    
+    def get_evaluation_model(self):
+        """Get current evaluation model."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute("SELECT value FROM manager_config WHERE key = 'evaluation_model'")
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else "claude-3.5-sonnet"  # Default
+    
+    def set_evaluation_model(self, model):
+        """Set evaluation model: gpt-4o, claude-3.5-sonnet, gpt-4-turbo, etc."""
+        valid_models = [
+            "gpt-4o", "gpt-4-turbo", "gpt-4", 
+            "claude-3.5-sonnet", "claude-3-opus", "claude-3-sonnet",
+            "o1-preview", "o1-mini"
+        ]
+        if model not in valid_models:
+            raise ValueError(f"Model must be one of: {', '.join(valid_models)}")
+            
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT OR REPLACE INTO manager_config (key, value) VALUES (?, ?)",
+            ("evaluation_model", model)
+        )
+        conn.commit()
+        conn.close()
+    
+    def calculate_confidence_score(self):
+        """Calculate manager's current confidence score based on historical accuracy."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute("""
+            SELECT 
+                COUNT(*) as total_decisions,
+                SUM(CASE WHEN user_feedback = 'correct' THEN 1 ELSE 0 END) as correct_decisions,
+                AVG(confidence_score) as avg_confidence
+            FROM manager_decisions 
+            WHERE user_feedback IS NOT NULL
+            AND created_at > datetime('now', '-30 days')
+        """)
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row or row[0] == 0:
+            return 0.5  # Default neutral confidence
+        
+        total, correct, avg_confidence = row
+        accuracy = correct / total if total > 0 else 0.5
+        
+        # Weighted score: 70% accuracy, 30% historical confidence
+        confidence_score = (accuracy * 0.7) + ((avg_confidence or 0.5) * 0.3)
+        return min(max(confidence_score, 0.0), 1.0)
+    
+    def should_escalate(self, request_data, confidence_score):
+        """Determine if request should be escalated based on autonomy level and confidence."""
+        autonomy_level = self.get_autonomy_level()
+        
+        # Parse risk indicators from request
+        risk_score = self._assess_risk(request_data)
+        
+        # Autonomy thresholds
+        thresholds = {
+            "conservative": {
+                "confidence_threshold": 0.8,
+                "risk_threshold": 0.3,
+                "escalate_percentage": 0.7  # Escalate 70% of requests
+            },
+            "balanced": {
+                "confidence_threshold": 0.6,
+                "risk_threshold": 0.5,
+                "escalate_percentage": 0.4  # Escalate 40% of requests
+            },
+            "aggressive": {
+                "confidence_threshold": 0.4,
+                "risk_threshold": 0.7,
+                "escalate_percentage": 0.2  # Escalate 20% of requests
+            }
+        }
+        
+        config = thresholds[autonomy_level]
+        
+        # Decision logic
+        if risk_score > config["risk_threshold"]:
+            return True  # High risk always escalates
+        if confidence_score < config["confidence_threshold"]:
+            return True  # Low confidence escalates
+        
+        # Random escalation based on autonomy level (for learning)
+        import random
+        if random.random() < config["escalate_percentage"] * (1 - confidence_score):
+            return True
+        
+        return False
+    
+    def _assess_risk(self, request_data):
+        """Assess risk level of a request (0.0 = safe, 1.0 = dangerous)."""
+        request_str = json.dumps(request_data).lower()
+        
+        # Risk indicators with weights
+        risk_indicators = {
+            # Critical risk (0.9-1.0)
+            "destructive": ["rm -rf", "delete", "drop table", "truncate", "format"],
+            "system": ["sudo", "chmod 777", "chown", "passwd"],
+            "network": ["curl -X DELETE", "wget", "ssh", "scp"],
+            
+            # High risk (0.6-0.8)
+            "database": ["alter table", "create table", "migration", "schema"],
+            "config": ["config", "settings", ".env", "credentials"],
+            "external": ["http", "api", "webhook"],
+            
+            # Medium risk (0.3-0.5) 
+            "files": ["write", "edit", "move", "copy"],
+            "install": ["npm install", "pip install", "apt install"],
+            
+            # Low risk (0.0-0.2)
+            "read": ["read", "cat", "ls", "grep", "search"],
+            "test": ["test", "pytest", "jest", "spec"]
+        }
+        
+        risk_weights = {
+            "destructive": 1.0, "system": 0.95, "network": 0.9,
+            "database": 0.7, "config": 0.6, "external": 0.6,
+            "files": 0.4, "install": 0.3,
+            "read": 0.1, "test": 0.1
+        }
+        
+        max_risk = 0.0
+        for category, keywords in risk_indicators.items():
+            for keyword in keywords:
+                if keyword in request_str:
+                    max_risk = max(max_risk, risk_weights[category])
+        
+        return max_risk
+    
+    def record_decision(self, agent_id, request_data, decision, confidence_score, model_used, session_id=None):
+        """Record a manager decision for learning purposes."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            INSERT INTO manager_decisions 
+            (agent_id, request_data, decision, confidence_score, autonomy_level, model_used)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (agent_id, json.dumps(request_data), decision, confidence_score, 
+              self.get_autonomy_level(), model_used))
+        conn.commit()
+        conn.close()
+        
+        # Log the interaction
+        if not session_id:
+            session_id = f"session_{int(time.time())}"
+        
+        # Log the agent request
+        self.log_interaction(
+            agent_id=agent_id,
+            session_id=session_id,
+            interaction_type="agent_request",
+            direction="agent_to_manager",
+            content=json.dumps(request_data, indent=2),
+            metadata={
+                "tool": request_data.get("tool"),
+                "risk_assessment": "pending"
+            }
+        )
+        
+        # Log the manager decision
+        self.log_interaction(
+            agent_id=agent_id,
+            session_id=session_id,
+            interaction_type="manager_response",
+            direction="manager_to_agent",
+            content=f"Decision: {decision.upper()}",
+            metadata={
+                "confidence_score": confidence_score,
+                "autonomy_level": self.get_autonomy_level(),
+                "model_used": model_used,
+                "decision_reasoning": f"Confidence: {confidence_score:.2f}, Autonomy: {self.get_autonomy_level()}"
+            }
+        )
+    
+    def provide_feedback(self, decision_id, feedback):
+        """Provide feedback on a manager decision (correct/incorrect)."""
+        if feedback not in ["correct", "incorrect"]:
+            raise ValueError("Feedback must be 'correct' or 'incorrect'")
+        
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "UPDATE manager_decisions SET user_feedback = ? WHERE id = ?",
+            (feedback, decision_id)
+        )
+        conn.commit()
+        conn.close()
+    
+    def get_decision_history(self, limit=20):
+        """Get recent manager decisions for review."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute("""
+            SELECT md.id, md.agent_id, a.task_description, md.decision, 
+                   md.confidence_score, md.autonomy_level, md.model_used,
+                   md.user_feedback, md.created_at
+            FROM manager_decisions md
+            JOIN agents a ON md.agent_id = a.id
+            ORDER BY md.created_at DESC
+            LIMIT ?
+        """, (limit,))
+        decisions = cursor.fetchall()
+        conn.close()
+        return decisions
+    
+    def log_interaction(self, agent_id, session_id, interaction_type, direction, content, metadata=None):
+        """Log an interaction between manager and agent."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            INSERT INTO interaction_logs 
+            (agent_id, session_id, interaction_type, direction, content, metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (agent_id, session_id, interaction_type, direction, content, 
+              json.dumps(metadata) if metadata else None))
+        conn.commit()
+        conn.close()
+    
+    def get_agent_logs(self, agent_id=None, session_id=None, limit=None, interaction_type=None):
+        """Get interaction logs for an agent or session."""
+        conn = sqlite3.connect(self.db_path)
+        
+        # Build query with filters
+        query = """
+            SELECT il.id, il.agent_id, a.task_description, il.session_id, 
+                   il.interaction_type, il.direction, il.content, il.metadata, il.timestamp
+            FROM interaction_logs il
+            JOIN agents a ON il.agent_id = a.id
+            WHERE 1=1
+        """
+        params = []
+        
+        if agent_id:
+            query += " AND il.agent_id = ?"
+            params.append(agent_id)
+        
+        if session_id:
+            query += " AND il.session_id = ?"
+            params.append(session_id)
+        
+        if interaction_type:
+            query += " AND il.interaction_type = ?"
+            params.append(interaction_type)
+        
+        query += " ORDER BY il.timestamp ASC"
+        
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+        
+        cursor = conn.execute(query, params)
+        logs = cursor.fetchall()
+        conn.close()
+        return logs
+    
+    def get_agent_sessions(self, agent_id):
+        """Get all session IDs for an agent."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.execute("""
+            SELECT DISTINCT session_id, MIN(timestamp) as start_time, MAX(timestamp) as end_time,
+                   COUNT(*) as interaction_count
+            FROM interaction_logs 
+            WHERE agent_id = ?
+            GROUP BY session_id
+            ORDER BY start_time DESC
+        """, (agent_id,))
+        sessions = cursor.fetchall()
+        conn.close()
+        return sessions
+    
+    def search_logs(self, search_term, agent_id=None, limit=50):
+        """Search interaction logs by content."""
+        conn = sqlite3.connect(self.db_path)
+        
+        query = """
+            SELECT il.id, il.agent_id, a.task_description, il.session_id, 
+                   il.interaction_type, il.direction, il.content, il.metadata, il.timestamp
+            FROM interaction_logs il
+            JOIN agents a ON il.agent_id = a.id
+            WHERE il.content LIKE ?
+        """
+        params = [f"%{search_term}%"]
+        
+        if agent_id:
+            query += " AND il.agent_id = ?"
+            params.append(agent_id)
+        
+        query += " ORDER BY il.timestamp DESC LIMIT ?"
+        params.append(limit)
+        
+        cursor = conn.execute(query, params)
+        logs = cursor.fetchall()
+        conn.close()
+        return logs
+    
+    def export_logs(self, agent_id, format="json"):
+        """Export all logs for an agent in specified format."""
+        logs = self.get_agent_logs(agent_id)
+        
+        if format == "json":
+            log_data = []
+            for log in logs:
+                log_entry = {
+                    "id": log[0],
+                    "agent_id": log[1],
+                    "task_description": log[2],
+                    "session_id": log[3],
+                    "interaction_type": log[4],
+                    "direction": log[5],
+                    "content": log[6],
+                    "metadata": json.loads(log[7]) if log[7] else None,
+                    "timestamp": log[8]
+                }
+                log_data.append(log_entry)
+            return json.dumps(log_data, indent=2)
+        
+        elif format == "text":
+            lines = []
+            current_session = None
+            
+            for log in logs:
+                log_id, agent_id, task_desc, session_id, interaction_type, direction, content, metadata, timestamp = log
+                
+                if session_id != current_session:
+                    lines.append(f"\n=== SESSION {session_id} ===")
+                    lines.append(f"Task: {task_desc}")
+                    lines.append("")
+                    current_session = session_id
+                
+                # Format timestamp
+                ts = timestamp.split('.')[0] if '.' in timestamp else timestamp
+                
+                # Format direction indicator
+                if direction == "agent_to_manager":
+                    indicator = "🤖→🧠"
+                elif direction == "manager_to_agent":
+                    indicator = "🧠→🤖"
+                else:
+                    indicator = "⚙️"
+                
+                lines.append(f"[{ts}] {indicator} {interaction_type.upper()}")
+                
+                # Format content with indentation
+                content_lines = content.split('\n')
+                for line in content_lines:
+                    lines.append(f"    {line}")
+                
+                # Add metadata if present
+                if metadata:
+                    meta_data = json.loads(metadata)
+                    lines.append(f"    📋 {json.dumps(meta_data, separators=(',', ':'))}")
+                
+                lines.append("")
+            
+            return '\n'.join(lines)
+        
+        else:
+            raise ValueError(f"Unsupported format: {format}")
+    
+    def simulate_agent_interaction(self, agent_id, session_id, tool_requests):
+        """Simulate a series of agent interactions for testing/demo purposes."""
+        for i, request in enumerate(tool_requests):
+            # Log agent request
+            self.log_interaction(
+                agent_id=agent_id,
+                session_id=session_id,
+                interaction_type="agent_request",
+                direction="agent_to_manager",
+                content=json.dumps(request, indent=2),
+                metadata={
+                    "tool": request.get("tool"),
+                    "sequence": i + 1,
+                    "total_requests": len(tool_requests)
+                }
+            )
+            
+            # Simulate manager evaluation
+            risk_score = self._assess_risk(request)
+            confidence_score = self.calculate_confidence_score()
+            should_escalate = self.should_escalate(request, confidence_score)
+            
+            decision = "escalate" if should_escalate else "approve"
+            
+            # Log manager response
+            self.log_interaction(
+                agent_id=agent_id,
+                session_id=session_id,
+                interaction_type="manager_response",
+                direction="manager_to_agent",
+                content=f"Decision: {decision.upper()}",
+                metadata={
+                    "confidence_score": confidence_score,
+                    "risk_score": risk_score,
+                    "autonomy_level": self.get_autonomy_level(),
+                    "reasoning": f"Risk: {risk_score:.2f}, Confidence: {confidence_score:.2f}"
+                }
+            )
+            
+            # Log agent response to decision
+            if decision == "approve":
+                self.log_interaction(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    interaction_type="agent_output",
+                    direction="agent_to_manager",
+                    content=f"Executing {request.get('tool')} operation...",
+                    metadata={
+                        "operation": request.get("tool"),
+                        "status": "executing"
+                    }
+                )
+                
+                # Simulate completion
+                import time
+                time.sleep(0.1)  # Small delay for realistic timestamps
+                
+                self.log_interaction(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    interaction_type="agent_output",
+                    direction="agent_to_manager", 
+                    content=f"✅ {request.get('tool')} operation completed successfully",
+                    metadata={
+                        "operation": request.get("tool"),
+                        "status": "completed",
+                        "result": "success"
+                    }
+                )
+            else:
+                self.log_interaction(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    interaction_type="agent_output",
+                    direction="agent_to_manager",
+                    content=f"⏸️ Waiting for user approval for {request.get('tool')} operation",
+                    metadata={
+                        "operation": request.get("tool"),
+                        "status": "waiting_approval"
+                    }
+                )
+
+
+def get_manager_daemon():
+    """Get or create manager daemon instance."""
+    return ManagerDaemon()
+
+
+def is_manager_running():
+    """Check if manager daemon is running."""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect("/tmp/mcl_manager.sock")
+        sock.close()
+        return True
+    except (ConnectionRefusedError, FileNotFoundError):
+        return False
+
+
+def send_manager_command(command, **kwargs):
+    """Send command to running manager daemon."""
+    if not is_manager_running():
+        print("❌ Manager daemon not running. Start with: mcl manager start")
+        return False
+    
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect("/tmp/mcl_manager.sock")
+        
+        message = {
+            'command': command,
+            'timestamp': time.time(),
+            **kwargs
+        }
+        
+        sock.send(json.dumps(message).encode())
+        response = sock.recv(4096).decode()
+        print(response)
+        sock.close()
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error communicating with manager: {e}")
+        return False
+
+
+def cmd_manager(args):
+    """Handle manager subcommands."""
+    if not hasattr(args, 'manager_command') or args.manager_command is None:
+        # No subcommand provided, show help
+        import argparse
+        parser = argparse.ArgumentParser(prog="mcl manager", description="Manage multiple Claude Code agents [EXPERIMENTAL]")
+        subparsers = parser.add_subparsers(dest="manager_command", help="Manager commands")
+        
+        # Recreate subcommands for help display
+        subparsers.add_parser("start", help="Start the manager daemon")
+        subparsers.add_parser("add", help="Add a new task to the manager")
+        subparsers.add_parser("status", help="Show active agents")
+        subparsers.add_parser("queue", help="Show approval queue")
+        subparsers.add_parser("approve", help="Approve a pending request")
+        subparsers.add_parser("deny", help="Deny a pending request")
+        subparsers.add_parser("stop", help="Stop the manager daemon")
+        subparsers.add_parser("config", help="Configure manager autonomy and evaluation model")
+        subparsers.add_parser("feedback", help="Provide feedback on manager decisions")
+        subparsers.add_parser("history", help="Show manager decision history")
+        subparsers.add_parser("stats", help="Show manager performance statistics")
+        subparsers.add_parser("log", help="View interaction logs between manager and agents")
+        subparsers.add_parser("sessions", help="List sessions for an agent")
+        subparsers.add_parser("simulate", help="Simulate agent interactions for testing")
+        
+        parser.print_help()
+        return
+    
+    if args.manager_command == "start":
+        if is_manager_running():
+            print("⚠️  Manager daemon already running")
+            return
+        
+        print("🚀 Starting manager daemon...")
+        daemon = get_manager_daemon()
+        
+        # Start daemon process (simplified for POC)  
+        print(f"📡 Manager daemon started")
+        print(f"📊 Agents directory: {daemon.agents_dir}")
+        print(f"🔔 Submit tasks with: mcl manager add <task> --repo <path>")
+        
+    elif args.manager_command == "add":
+        task_description = args.task
+        repo_path = args.repo
+        priority = getattr(args, 'priority', 'normal')
+        
+        if not is_manager_running():
+            # Auto-start manager if not running
+            print("🚀 Starting manager daemon...")
+            daemon = get_manager_daemon()
+        else:
+            daemon = get_manager_daemon()
+        
+        agent_id, session_id = daemon.spawn_agent(task_description, repo_path, priority)
+        print(f"🤖 Task queued with agent {agent_id}")
+        
+    elif args.manager_command == "status":
+        daemon = get_manager_daemon()
+        agents = daemon.get_active_agents()
+        
+        if not agents:
+            print("📭 No active agents")
+            return
+        
+        print("🤖 ACTIVE AGENTS:")
+        print("-" * 80)
+        print(f"{'AGENT ID':<10} | {'TASK DESCRIPTION':<43} | {'PRIORITY':<8} | CREATED")
+        print("-" * 80)
+        for agent in agents:
+            agent_id, task_desc, repo_path, status, priority, created_at = agent
+            task_short = task_desc[:40] + "..." if len(task_desc) > 40 else task_desc
+            print(f"{agent_id:<10} | {task_short:<43} | {priority:<8} | {created_at}")
+        
+        print(f"\nUse agent IDs with other commands:")
+        print(f"  mcl manager log --agent <AGENT_ID>      # View agent logs")
+        print(f"  mcl manager sessions --agent <AGENT_ID> # List agent sessions")
+        
+    elif args.manager_command == "queue":
+        daemon = get_manager_daemon()
+        queue = daemon.get_approval_queue()
+        
+        if not queue:
+            print("📭 No pending approvals")
+            return
+        
+        print("⏳ APPROVAL QUEUE:")
+        print("-" * 60)
+        for item in queue:
+            queue_id, agent_id, req_type, req_data, created_at, task_desc = item
+            print(f"{queue_id} | {agent_id} | {req_type} | {created_at}")
+            
+    elif args.manager_command == "stop":
+        if not is_manager_running():
+            print("ℹ️  Manager daemon not running")
+            return
+        
+        send_manager_command("stop")
+        print("🛑 Manager daemon stopped")
+    
+    elif args.manager_command == "config":
+        daemon = get_manager_daemon()
+        
+        if hasattr(args, 'autonomy') and args.autonomy:
+            daemon.set_autonomy_level(args.autonomy)
+            print(f"🎛️  Autonomy level set to: {args.autonomy}")
+        
+        if hasattr(args, 'model') and args.model:
+            daemon.set_evaluation_model(args.model)
+            print(f"🧠 Evaluation model set to: {args.model}")
+        
+        # Show current config
+        autonomy = daemon.get_autonomy_level()
+        model = daemon.get_evaluation_model()
+        confidence = daemon.calculate_confidence_score()
+        
+        print(f"📊 CURRENT CONFIGURATION:")
+        print(f"   Autonomy Level: {autonomy}")
+        print(f"   Evaluation Model: {model}")
+        print(f"   Confidence Score: {confidence:.2f}")
+    
+    elif args.manager_command == "feedback":
+        daemon = get_manager_daemon()
+        daemon.provide_feedback(args.decision_id, args.feedback)
+        print(f"✅ Feedback recorded for decision {args.decision_id}: {args.feedback}")
+    
+    elif args.manager_command == "history":
+        daemon = get_manager_daemon()
+        decisions = daemon.get_decision_history(getattr(args, 'limit', 20))
+        
+        if not decisions:
+            print("📭 No decision history found")
+            return
+        
+        print("📈 DECISION HISTORY:")
+        print("-" * 80)
+        for decision in decisions:
+            decision_id, agent_id, task_desc, decision_type, confidence, autonomy, model, feedback, created_at = decision
+            task_short = task_desc[:30] + "..." if len(task_desc) > 30 else task_desc
+            feedback_symbol = "✅" if feedback == "correct" else "❌" if feedback == "incorrect" else "⏳"
+            print(f"{decision_id:3d} | {agent_id} | {task_short:<33} | {decision_type:<8} | {confidence:.2f} | {feedback_symbol} | {created_at}")
+    
+    elif args.manager_command == "stats":
+        daemon = get_manager_daemon()
+        
+        # Get confidence and accuracy stats
+        confidence = daemon.calculate_confidence_score()
+        autonomy = daemon.get_autonomy_level()
+        model = daemon.get_evaluation_model()
+        
+        # Get recent decision stats
+        conn = sqlite3.connect(daemon.db_path)
+        cursor = conn.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN decision = 'approve' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN decision = 'escalate' THEN 1 ELSE 0 END) as escalated,
+                SUM(CASE WHEN user_feedback = 'correct' THEN 1 ELSE 0 END) as correct,
+                SUM(CASE WHEN user_feedback = 'incorrect' THEN 1 ELSE 0 END) as incorrect
+            FROM manager_decisions 
+            WHERE created_at > datetime('now', '-7 days')
+        """)
+        stats = cursor.fetchone()
+        conn.close()
+        
+        if stats:
+            total, approved, escalated, correct, incorrect = stats
+            # Handle None values from SUM operations
+            total = total or 0
+            approved = approved or 0
+            escalated = escalated or 0
+            correct = correct or 0
+            incorrect = incorrect or 0
+        else:
+            total = approved = escalated = correct = incorrect = 0
+        
+        print("📊 MANAGER STATISTICS (Last 7 Days):")
+        print("-" * 50)
+        print(f"Configuration:")
+        print(f"  Autonomy Level: {autonomy}")
+        print(f"  Evaluation Model: {model}")
+        print(f"  Confidence Score: {confidence:.2f}")
+        print()
+        print(f"Decision Breakdown:")
+        print(f"  Total Decisions: {total}")
+        print(f"  Auto-Approved: {approved} ({approved/total*100:.1f}%)" if total > 0 else "  Auto-Approved: 0 (0%)")
+        print(f"  Escalated: {escalated} ({escalated/total*100:.1f}%)" if total > 0 else "  Escalated: 0 (0%)")
+        print()
+        print(f"Accuracy (with feedback):")
+        print(f"  Correct: {correct}")
+        print(f"  Incorrect: {incorrect}")
+        print(f"  Accuracy: {correct/(correct+incorrect)*100:.1f}%" if (correct+incorrect) > 0 else "  Accuracy: No feedback yet")
+    
+    elif args.manager_command == "log":
+        daemon = get_manager_daemon()
+        
+        if hasattr(args, 'agent_id') and args.agent_id:
+            # Show logs for specific agent
+            logs = daemon.get_agent_logs(
+                agent_id=args.agent_id,
+                session_id=getattr(args, 'session_id', None),
+                limit=getattr(args, 'limit', 100),
+                interaction_type=getattr(args, 'type', None)
+            )
+            
+            if not logs:
+                print(f"📭 No logs found for agent {args.agent_id}")
+                return
+            
+            # Display format
+            format_type = getattr(args, 'format', 'text')
+            if format_type == 'json':
+                print(daemon.export_logs(args.agent_id, format='json'))
+            else:
+                print(daemon.export_logs(args.agent_id, format='text'))
+        
+        elif hasattr(args, 'search') and args.search:
+            # Search logs by content
+            logs = daemon.search_logs(
+                search_term=args.search,
+                agent_id=getattr(args, 'agent_id', None),
+                limit=getattr(args, 'limit', 50)
+            )
+            
+            if not logs:
+                print(f"📭 No logs found matching '{args.search}'")
+                return
+            
+            print(f"🔍 SEARCH RESULTS FOR '{args.search}':")
+            print("-" * 60)
+            for log in logs:
+                log_id, agent_id, task_desc, session_id, interaction_type, direction, content, metadata, timestamp = log
+                ts = timestamp.split('.')[0] if '.' in timestamp else timestamp
+                
+                # Direction indicator
+                if direction == "agent_to_manager":
+                    indicator = "🤖→🧠"
+                elif direction == "manager_to_agent": 
+                    indicator = "🧠→🤖"
+                else:
+                    indicator = "⚙️"
+                
+                print(f"[{ts}] {indicator} {agent_id} | {interaction_type}")
+                # Show first line of content
+                first_line = content.split('\n')[0][:80]
+                if len(first_line) == 80:
+                    first_line += "..."
+                print(f"    {first_line}")
+                print()
+        
+        else:
+            # List all agents with log activity
+            conn = sqlite3.connect(daemon.db_path)
+            cursor = conn.execute("""
+                SELECT il.agent_id, a.task_description, COUNT(*) as log_count,
+                       MIN(il.timestamp) as first_log, MAX(il.timestamp) as last_log
+                FROM interaction_logs il
+                JOIN agents a ON il.agent_id = a.id
+                GROUP BY il.agent_id, a.task_description
+                ORDER BY last_log DESC
+            """)
+            agents_with_logs = cursor.fetchall()
+            conn.close()
+            
+            if not agents_with_logs:
+                print("📭 No interaction logs found")
+                return
+            
+            print("📋 AGENTS WITH INTERACTION LOGS:")
+            print("-" * 80)
+            print(f"{'AGENT ID':<10} | {'TASK DESCRIPTION':<43} | {'LOGS':<8} | LAST ACTIVITY")
+            print("-" * 80)
+            for agent_id, task_desc, log_count, first_log, last_log in agents_with_logs:
+                task_short = task_desc[:40] + "..." if len(task_desc) > 40 else task_desc
+                last_ts = last_log.split('.')[0] if '.' in last_log else last_log
+                print(f"{agent_id:<10} | {task_short:<43} | {log_count:>4} logs | {last_ts}")
+            
+            print(f"\nCommands:")
+            print(f"  mcl manager log --agent <AGENT_ID>         # View detailed logs")
+            print(f"  mcl manager sessions --agent <AGENT_ID>    # List sessions")
+            print(f"  mcl manager log --search <term>            # Search all logs")
+    
+    elif args.manager_command == "sessions":
+        daemon = get_manager_daemon()
+        
+        if not hasattr(args, 'agent_id') or not args.agent_id:
+            # Show help for sessions command
+            import argparse
+            parser = argparse.ArgumentParser(prog="mcl manager sessions", description="List sessions for an agent")
+            parser.add_argument("--agent", dest="agent_id", required=True, help="Agent ID to list sessions for")
+            parser.print_help()
+            return
+        
+        sessions = daemon.get_agent_sessions(args.agent_id)
+        
+        if not sessions:
+            print(f"📭 No sessions found for agent {args.agent_id}")
+            return
+        
+        print(f"📅 SESSIONS FOR AGENT {args.agent_id}:")
+        print("-" * 70)
+        for session_id, start_time, end_time, interaction_count in sessions:
+            start_ts = start_time.split('.')[0] if '.' in start_time else start_time
+            end_ts = end_time.split('.')[0] if '.' in end_time else end_time
+            print(f"{session_id} | {start_ts} → {end_ts} | {interaction_count} interactions")
+        
+        print(f"\nUse: mcl manager log --agent {args.agent_id} --session <session_id> to view session logs")
+    
+    elif args.manager_command == "simulate":
+        # Demo/testing command to simulate agent interactions
+        daemon = get_manager_daemon()
+        
+        if not hasattr(args, 'agent_id') or not args.agent_id:
+            # Show help for simulate command
+            import argparse
+            parser = argparse.ArgumentParser(prog="mcl manager simulate", description="Simulate agent interactions for testing")
+            parser.add_argument("--agent", dest="agent_id", required=True, help="Agent ID to simulate interactions for")
+            parser.print_help()
+            return
+        
+        # Sample tool requests for simulation
+        tool_requests = [
+            {"tool": "read", "file_path": "src/main.py", "reason": "Understanding current implementation"},
+            {"tool": "grep", "pattern": "function.*auth", "reason": "Finding authentication functions"},
+            {"tool": "edit", "file_path": "src/auth.py", "content": "# Updated auth logic", "reason": "Implementing fix"},
+            {"tool": "bash", "command": "npm test", "reason": "Running tests"},
+            {"tool": "edit", "file_path": "config/database.yml", "content": "pool: 10", "reason": "Updating DB config"}
+        ]
+        
+        session_id = f"sim_session_{int(time.time())}"
+        
+        print(f"🎭 Simulating agent interactions for {args.agent_id}...")
+        daemon.simulate_agent_interaction(args.agent_id, session_id, tool_requests)
+        print(f"✅ Simulation complete. View logs with: mcl manager log --agent {args.agent_id}")
+        
+    else:
+        print(f"❌ Unknown manager command: {args.manager_command}")
+
+
 def cmd_start(args):
     """Handle the 'start' subcommand - create a new task workspace."""
     # Determine if we're working with a local repo or URL
@@ -1021,6 +2051,86 @@ Then use:
         "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
     )
     cd_parser.set_defaults(func=cmd_cd)
+
+    # Manager subcommand
+    manager_parser = subparsers.add_parser("manager", help="Manage multiple Claude Code agents [EXPERIMENTAL]")
+    manager_parser.set_defaults(func=cmd_manager)
+    manager_subparsers = manager_parser.add_subparsers(dest="manager_command", help="Manager commands")
+    
+    # manager start
+    manager_start_parser = manager_subparsers.add_parser("start", help="Start the manager daemon")
+    manager_start_parser.set_defaults(func=cmd_manager)
+    
+    # manager add
+    manager_add_parser = manager_subparsers.add_parser("add", help="Add a new task to the manager")
+    manager_add_parser.add_argument("task", help="Task description")
+    manager_add_parser.add_argument("--repo", required=True, help="Repository path")
+    manager_add_parser.add_argument("--priority", choices=["low", "normal", "high"], default="normal", help="Task priority")
+    manager_add_parser.add_argument("--budget", type=int, default=100, help="Budget limit for task")
+    manager_add_parser.set_defaults(func=cmd_manager)
+    
+    # manager status
+    manager_status_parser = manager_subparsers.add_parser("status", help="Show active agents")
+    manager_status_parser.set_defaults(func=cmd_manager)
+    
+    # manager queue
+    manager_queue_parser = manager_subparsers.add_parser("queue", help="Show approval queue")
+    manager_queue_parser.set_defaults(func=cmd_manager)
+    
+    # manager approve
+    manager_approve_parser = manager_subparsers.add_parser("approve", help="Approve a pending request")
+    manager_approve_parser.add_argument("request_id", help="Request ID to approve")
+    manager_approve_parser.set_defaults(func=cmd_manager)
+    
+    # manager deny
+    manager_deny_parser = manager_subparsers.add_parser("deny", help="Deny a pending request")
+    manager_deny_parser.add_argument("request_id", help="Request ID to deny")
+    manager_deny_parser.set_defaults(func=cmd_manager)
+    
+    # manager stop
+    manager_stop_parser = manager_subparsers.add_parser("stop", help="Stop the manager daemon")
+    manager_stop_parser.set_defaults(func=cmd_manager)
+    
+    # manager config
+    manager_config_parser = manager_subparsers.add_parser("config", help="Configure manager autonomy and evaluation model")
+    manager_config_parser.add_argument("--autonomy", choices=["conservative", "balanced", "aggressive"], help="Set autonomy level")
+    manager_config_parser.add_argument("--model", choices=["gpt-4o", "gpt-4-turbo", "claude-3.5-sonnet", "claude-3-opus", "o1-preview", "o1-mini"], help="Set evaluation model")
+    manager_config_parser.set_defaults(func=cmd_manager)
+    
+    # manager feedback
+    manager_feedback_parser = manager_subparsers.add_parser("feedback", help="Provide feedback on manager decisions")
+    manager_feedback_parser.add_argument("decision_id", type=int, help="Decision ID from history")
+    manager_feedback_parser.add_argument("feedback", choices=["correct", "incorrect"], help="Feedback on decision quality")
+    manager_feedback_parser.set_defaults(func=cmd_manager)
+    
+    # manager history
+    manager_history_parser = manager_subparsers.add_parser("history", help="Show manager decision history")
+    manager_history_parser.add_argument("--limit", type=int, default=20, help="Number of decisions to show")
+    manager_history_parser.set_defaults(func=cmd_manager)
+    
+    # manager stats
+    manager_stats_parser = manager_subparsers.add_parser("stats", help="Show manager performance statistics")
+    manager_stats_parser.set_defaults(func=cmd_manager)
+    
+    # manager log
+    manager_log_parser = manager_subparsers.add_parser("log", help="View interaction logs between manager and agents")
+    manager_log_parser.add_argument("--agent", dest="agent_id", help="Agent ID to view logs for")
+    manager_log_parser.add_argument("--session", dest="session_id", help="Session ID to filter by")
+    manager_log_parser.add_argument("--search", help="Search logs by content")
+    manager_log_parser.add_argument("--type", choices=["agent_request", "manager_response", "agent_output", "system_event"], help="Filter by interaction type")
+    manager_log_parser.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
+    manager_log_parser.add_argument("--limit", type=int, default=100, help="Limit number of log entries")
+    manager_log_parser.set_defaults(func=cmd_manager)
+    
+    # manager sessions
+    manager_sessions_parser = manager_subparsers.add_parser("sessions", help="List sessions for an agent")
+    manager_sessions_parser.add_argument("--agent", dest="agent_id", help="Agent ID to list sessions for")
+    manager_sessions_parser.set_defaults(func=cmd_manager)
+    
+    # manager simulate (for testing/demo)
+    manager_simulate_parser = manager_subparsers.add_parser("simulate", help="Simulate agent interactions for testing")
+    manager_simulate_parser.add_argument("--agent", dest="agent_id", help="Agent ID to simulate interactions for")
+    manager_simulate_parser.set_defaults(func=cmd_manager)
 
     args = parser.parse_args()
 
