@@ -10,7 +10,16 @@
       "Bash(git add:*)",
       "Bash(git push:*)",
       "Bash(mcl_cd:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh api:*)",
+      "Bash(gh run watch:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(pytest:*)"
     ],
     "deny": []
   }

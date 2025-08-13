@@ -35,17 +35,22 @@ try:
     from rich.table import Table
     from rich.text import Text
     from rich import box
+
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
-
 
 
 def run_command(cmd, cwd=None, capture_output=True):
     """Run a shell command and return the result."""
     try:
         result = subprocess.run(
-            cmd, shell=True, cwd=cwd, capture_output=capture_output, text=True, check=True
+            cmd,
+            shell=True,
+            cwd=cwd,
+            capture_output=capture_output,
+            text=True,
+            check=True,
         )
         return result.stdout.strip() if capture_output else None
     except subprocess.CalledProcessError as e:
@@ -57,7 +62,7 @@ def run_command(cmd, cwd=None, capture_output=True):
 
 def is_github_issue_url(text):
     """Check if the text is a GitHub issue URL."""
-    pattern = r'https://github\.com/[\w\-\.]+/[\w\-\.]+/issues/\d+'
+    pattern = r"https://github\.com/[\w\-\.]+/[\w\-\.]+/issues/\d+"
     return bool(re.match(pattern, text))
 
 
@@ -69,13 +74,13 @@ def is_requirements_file(text):
 def read_requirements_file(file_path):
     """Read requirements from a file."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             content = f.read().strip()
-        
+
         if not content:
             print(f"Warning: Requirements file {file_path} is empty")
             return "No requirements specified"
-        
+
         return content
     except Exception as e:
         print(f"Error reading requirements file {file_path}: {e}")
@@ -85,45 +90,45 @@ def read_requirements_file(file_path):
 def fetch_github_issue(issue_url):
     """Fetch GitHub issue content using GitHub API."""
     # Parse URL to extract owner, repo, and issue number
-    pattern = r'https://github\.com/([\w\-\.]+)/([\w\-\.]+)/issues/(\d+)'
+    pattern = r"https://github\.com/([\w\-\.]+)/([\w\-\.]+)/issues/(\d+)"
     match = re.match(pattern, issue_url)
-    
+
     if not match:
         print(f"Invalid GitHub issue URL: {issue_url}")
         return None
-    
+
     owner, repo, issue_number = match.groups()
     api_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}"
-    
+
     try:
         # Create request with authentication if GITHUB_TOKEN is available
         headers = {}
-        github_token = os.getenv('GITHUB_TOKEN')
+        github_token = os.getenv("GITHUB_TOKEN")
         if github_token:
-            headers['Authorization'] = f'token {github_token}'
-            headers['User-Agent'] = 'gh-task-setup-script'
-        
+            headers["Authorization"] = f"token {github_token}"
+            headers["User-Agent"] = "gh-task-setup-script"
+
         request = Request(api_url, headers=headers)
-        
+
         with urlopen(request) as response:
             if response.status != 200:
                 print(f"HTTP error {response.status} fetching issue")
                 return None
-            issue_data = json.loads(response.read().decode('utf-8'))
-        
-        title = issue_data.get('title', '')
-        body = issue_data.get('body', '')
-        labels = [label['name'] for label in issue_data.get('labels', [])]
-        
+            issue_data = json.loads(response.read().decode("utf-8"))
+
+        title = issue_data.get("title", "")
+        body = issue_data.get("body", "")
+        labels = [label["name"] for label in issue_data.get("labels", [])]
+
         # Format the issue content
         formatted_content = f"# {title}\n\n"
         if labels:
             formatted_content += f"**Labels:** {', '.join(labels)}\n\n"
         formatted_content += f"**Issue URL:** {issue_url}\n\n"
         formatted_content += f"## Description\n\n{body}\n"
-        
+
         return formatted_content
-    
+
     except (URLError, HTTPError) as e:
         print(f"Error fetching GitHub issue: {e}")
         return None
@@ -141,29 +146,38 @@ def is_local_path(repo_path):
 
 def is_git_url(repo_url):
     """Check if the repo argument is a Git URL."""
-    return repo_url.startswith(('http://', 'https://', 'git@', 'ssh://'))
+    return repo_url.startswith(("http://", "https://", "git@", "ssh://"))
 
 
 def generate_feature_summary(requirements):
     """Generate a short feature summary from requirements for directory naming."""
     # Extract first line or first sentence
-    first_line = requirements.split('\n')[0].strip()
+    first_line = requirements.split("\n")[0].strip()
     if not first_line:
         return "task"
-    
+
     # Remove common prefixes and clean up
-    prefixes_to_remove = ['add ', 'implement ', 'create ', 'build ', 'fix ', 'update ', 'modify ', 'refactor ']
+    prefixes_to_remove = [
+        "add ",
+        "implement ",
+        "create ",
+        "build ",
+        "fix ",
+        "update ",
+        "modify ",
+        "refactor ",
+    ]
     cleaned = first_line.lower()
     for prefix in prefixes_to_remove:
         if cleaned.startswith(prefix):
-            cleaned = cleaned[len(prefix):]
+            cleaned = cleaned[len(prefix) :]
             break
-    
+
     # Extract key words (limit to 3-4 words)
-    words = re.sub(r'[^a-zA-Z0-9\s]', '', cleaned).split()[:4]
+    words = re.sub(r"[^a-zA-Z0-9\s]", "", cleaned).split()[:4]
     if not words:
         return "task"
-    
+
     return "-".join(words)
 
 
@@ -173,10 +187,10 @@ def get_repo_name(repo_input):
         return os.path.basename(os.path.abspath(repo_input))
     else:
         parsed = urlparse(repo_input)
-        path = parsed.path.strip('/')
-        if path.endswith('.git'):
+        path = parsed.path.strip("/")
+        if path.endswith(".git"):
             path = path[:-4]
-        return path.split('/')[-1]
+        return path.split("/")[-1]
 
 
 def get_feature_repo_name(repo_input, requirements):
@@ -190,7 +204,7 @@ def get_unique_repo_path(base_path):
     """Generate a unique repository path by appending a counter if needed."""
     if not base_path.exists():
         return base_path
-    
+
     counter = 1
     while True:
         unique_path = Path(f"{base_path}-{counter}")
@@ -201,26 +215,28 @@ def get_unique_repo_path(base_path):
 
 def is_git_repo(path):
     """Check if a directory is a git repository."""
-    git_dir = Path(path) / '.git'
+    git_dir = Path(path) / ".git"
     return git_dir.exists()
 
 
 def setup_local_repo(source_path, dest_path, branch_name):
     """Set up local repository using git worktree if it's a git repo, otherwise copy."""
     import shutil
-    
+
     # Find a unique destination path instead of overwriting
     unique_dest_path = get_unique_repo_path(dest_path)
     if unique_dest_path != dest_path:
         print(f"Directory {dest_path} exists, using {unique_dest_path} instead")
         dest_path = unique_dest_path
-    
+
     # Check if source is a git repository
     if is_git_repo(source_path):
         print(f"Creating git worktree from {source_path} to {dest_path}")
         return create_git_worktree(source_path, dest_path, branch_name)
     else:
-        print(f"Source is not a git repository, copying directory from {source_path} to {dest_path}")
+        print(
+            f"Source is not a git repository, copying directory from {source_path} to {dest_path}"
+        )
         return copy_non_git_directory(source_path, dest_path, branch_name)
 
 
@@ -228,49 +244,54 @@ def create_git_worktree(source_path, dest_path, branch_name):
     """Create a git worktree from source repository."""
     # First, ensure we're working from the main branch and have latest changes
     original_cwd = Path.cwd()
-    
+
     try:
         # Work in the source repo to prepare it
         print("Preparing source repository...")
-        
+
         # Stash any uncommitted changes in source
         status_result = run_command("git status --porcelain", cwd=source_path)
         if status_result and status_result.strip():
             print("Found uncommitted changes in source, stashing them...")
-            run_command("git stash push -m 'Auto-stash before worktree creation'", cwd=source_path)
-        
+            run_command(
+                "git stash push -m 'Auto-stash before worktree creation'",
+                cwd=source_path,
+            )
+
         # Try to fetch latest changes if remote exists
         remote_check = run_command("git remote", cwd=source_path)
         if remote_check and remote_check.strip():
             print("Fetching latest changes...")
             run_command("git fetch origin", cwd=source_path)
-        
+
         # Find and checkout main/master branch
         main_branch = None
-        for branch in ['main', 'master']:
+        for branch in ["main", "master"]:
             checkout_result = run_command(f"git checkout {branch}", cwd=source_path)
             if checkout_result is not None:
                 main_branch = branch
                 print(f"Checked out {branch} branch in source repository")
                 break
-        
+
         if not main_branch:
             print("Warning: Could not find main or master branch, using current branch")
             # Get current branch name
             current_branch = run_command("git branch --show-current", cwd=source_path)
             main_branch = current_branch.strip() if current_branch else "HEAD"
-        
+
         # Create the worktree with new branch
         print(f"Creating worktree with branch '{branch_name}'...")
-        worktree_result = run_command(f"git worktree add {dest_path} -b {branch_name}", cwd=source_path)
-        
+        worktree_result = run_command(
+            f"git worktree add {dest_path} -b {branch_name}", cwd=source_path
+        )
+
         if worktree_result is None:
             print("Failed to create git worktree, falling back to directory copy")
             return copy_non_git_directory(source_path, dest_path, branch_name)
-        
+
         print(f"Successfully created git worktree at {dest_path}")
         return True
-        
+
     except Exception as e:
         print(f"Error creating git worktree: {e}")
         print("Falling back to directory copy")
@@ -280,28 +301,30 @@ def create_git_worktree(source_path, dest_path, branch_name):
 def copy_non_git_directory(source_path, dest_path, branch_name):
     """Copy non-git directory or fallback copy method."""
     import shutil
-    
+
     print(f"Copying directory from {source_path} to {dest_path}")
     shutil.copytree(source_path, dest_path)
-    
+
     # Remove virtual environment directories
-    venv_dirs = ['venv', 'env', '.venv']
+    venv_dirs = ["venv", "env", ".venv"]
     for venv_dir in venv_dirs:
         venv_path = dest_path / venv_dir
         if venv_path.exists():
             print(f"Removing virtual environment directory: {venv_path}")
             shutil.rmtree(venv_path)
-    
+
     # If destination has .git, perform git operations
     if is_git_repo(dest_path):
         # Check if there are any uncommitted changes and stash them
         status_result = run_command("git status --porcelain", cwd=dest_path)
         if status_result and status_result.strip():
             print("Found uncommitted changes, stashing them...")
-            stash_result = run_command("git stash push -m 'Auto-stash before reset to main'", cwd=dest_path)
+            stash_result = run_command(
+                "git stash push -m 'Auto-stash before reset to main'", cwd=dest_path
+            )
             if stash_result is None:
                 print("Failed to stash changes, performing hard reset...")
-        
+
         # Try to fetch latest changes if remote exists
         remote_check = run_command("git remote", cwd=dest_path)
         if remote_check and remote_check.strip():
@@ -311,20 +334,24 @@ def copy_non_git_directory(source_path, dest_path, branch_name):
         else:
             print("No remote repository configured, skipping fetch")
             has_remote = False
-        
+
         # Try to checkout main/master branch
-        for main_branch in ['main', 'master']:
+        for main_branch in ["main", "master"]:
             print(f"Attempting to checkout {main_branch} branch...")
             checkout_result = run_command(f"git checkout {main_branch}", cwd=dest_path)
             if checkout_result is not None:
                 if has_remote:
                     # Reset to latest origin if we have a remote
-                    reset_result = run_command(f"git reset --hard origin/{main_branch}", cwd=dest_path)
+                    reset_result = run_command(
+                        f"git reset --hard origin/{main_branch}", cwd=dest_path
+                    )
                     if reset_result is not None:
                         print(f"Successfully reset to origin/{main_branch}")
                         break
                     else:
-                        print(f"Failed to reset to origin/{main_branch}, using local {main_branch}")
+                        print(
+                            f"Failed to reset to origin/{main_branch}, using local {main_branch}"
+                        )
                         break
                 else:
                     print(f"Successfully checked out local {main_branch} branch")
@@ -332,8 +359,10 @@ def copy_non_git_directory(source_path, dest_path, branch_name):
             else:
                 print(f"Branch {main_branch} not found")
         else:
-            print("Warning: Could not find main or master branch, staying on current branch")
-    
+            print(
+                "Warning: Could not find main or master branch, staying on current branch"
+            )
+
     return True
 
 
@@ -347,40 +376,43 @@ def cleanup_worktree(repo_path, source_path=None):
     """Clean up git worktree if it exists."""
     if not repo_path.exists():
         return True
-    
+
     # Check if this is a git worktree by looking for .git file (not directory)
-    git_file = repo_path / '.git'
+    git_file = repo_path / ".git"
     if git_file.exists() and git_file.is_file():
         try:
             # Read the .git file to find the source repository
-            with open(git_file, 'r') as f:
+            with open(git_file, "r") as f:
                 git_content = f.read().strip()
-            
-            if git_content.startswith('gitdir: '):
+
+            if git_content.startswith("gitdir: "):
                 print(f"Removing git worktree: {repo_path}")
                 # Use git worktree remove command
                 if source_path and is_git_repo(source_path):
-                    remove_result = run_command(f"git worktree remove {repo_path}", cwd=source_path)
+                    remove_result = run_command(
+                        f"git worktree remove {repo_path}", cwd=source_path
+                    )
                     if remove_result is not None:
                         print(f"Successfully removed worktree")
                         return True
-                
+
                 # If that fails, remove manually and prune
                 import shutil
+
                 if repo_path.exists():
                     shutil.rmtree(repo_path)
                     print(f"Manually removed worktree directory")
                 return True
         except Exception as e:
             print(f"Error cleaning up worktree: {e}")
-    
+
     return False
 
 
 def create_task_memory(requirements, repo_path, branch_name):
     """Create TASK_MEMORY.md file with requirements and instructions."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     content = f"""# Task Memory
 
 **Created:** {timestamp}
@@ -408,11 +440,11 @@ def create_task_memory(requirements, repo_path, branch_name):
 
 *This file serves as your working memory for this task. Keep it updated as you progress through the implementation.*
 """
-    
+
     memory_file = os.path.join(repo_path, "TASK_MEMORY.md")
-    with open(memory_file, 'w') as f:
+    with open(memory_file, "w") as f:
         f.write(content)
-    
+
     print(f"Created TASK_MEMORY.md in {memory_file}")
     return memory_file
 
@@ -420,14 +452,14 @@ def create_task_memory(requirements, repo_path, branch_name):
 def list_staged_directories(staging_dir=None):
     """List staged tasks with Rich formatting."""
     from datetime import datetime
-    
+
     # Get staging directory
     if staging_dir is None:
         home_dir = Path.home()
         staging_dir = home_dir / ".mcl" / "staging"
     else:
         staging_dir = Path(staging_dir)
-    
+
     if not staging_dir.exists():
         if HAS_RICH:
             console = Console()
@@ -435,7 +467,7 @@ def list_staged_directories(staging_dir=None):
         else:
             print(f"Staging directory {staging_dir} does not exist.")
         return
-    
+
     # Find all directories in staging
     staged_dirs = []
     for item in staging_dir.iterdir():
@@ -443,14 +475,18 @@ def list_staged_directories(staging_dir=None):
             # Get last modified time for sorting
             mtime = item.stat().st_mtime
             dir_name = item.name
-            
-            staged_dirs.append({
-                'name': dir_name,
-                'path': str(item),
-                'mtime': mtime,
-                'modified': datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-            })
-    
+
+            staged_dirs.append(
+                {
+                    "name": dir_name,
+                    "path": str(item),
+                    "mtime": mtime,
+                    "modified": datetime.fromtimestamp(mtime).strftime(
+                        "%Y-%m-%d %H:%M"
+                    ),
+                }
+            )
+
     if not staged_dirs:
         if HAS_RICH:
             console = Console()
@@ -458,46 +494,48 @@ def list_staged_directories(staging_dir=None):
         else:
             print("No tasks found.")
         return
-    
+
     # Sort by modification time (newest first)
-    staged_dirs.sort(key=lambda x: x['mtime'], reverse=True)
-    
+    staged_dirs.sort(key=lambda x: x["mtime"], reverse=True)
+
     # Display with Rich formatting if available
     if HAS_RICH:
         console = Console()
-        
+
         # Create a beautiful table
         table = Table(title="📁 Staged Tasks", box=box.ROUNDED)
         table.add_column("#", style="cyan", width=3)
         table.add_column("Task Name", style="green")
         table.add_column("Last Modified", style="yellow")
-        
+
         for i, dir_info in enumerate(staged_dirs, 1):
-            table.add_row(str(i), dir_info['name'], dir_info['modified'])
-        
+            table.add_row(str(i), dir_info["name"], dir_info["modified"])
+
         console.print(table)
         console.print()
-        
+
     # Show shell integration info
     if HAS_RICH:
         console.print("[dim]Shell integration:[/dim]")
         console.print("[dim]- Use: mcl_cd N              (change to task N)[/dim]")
-        console.print("[dim]- Or:  eval \"$(mcl cd N)\"    (manual method)[/dim]")
-        console.print("[dim]- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc[/dim]")
+        console.print('[dim]- Or:  eval "$(mcl cd N)"    (manual method)[/dim]')
+        console.print(
+            "[dim]- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc[/dim]"
+        )
     else:
         # Fallback to simple format
         print("Tasks:")
         print("------")
         for i, dir_info in enumerate(staged_dirs, 1):
             print(f"{i:2d}. {dir_info['name']} ({dir_info['modified']})")
-        
+
         print()
         print("Shell integration:")
         print("- Use: mcl_cd N              (change to task N)")
-        print("- Or:  eval \"$(mcl cd N)\"    (manual method)")
+        print('- Or:  eval "$(mcl cd N)"    (manual method)')
         print("- Setup: Add 'eval \"$(mcl shell-init)\"' to your ~/.bashrc or ~/.zshrc")
         print()
-    
+
     return staged_dirs
 
 
@@ -509,35 +547,34 @@ def handle_cd_command(staging_dir, selection):
         staging_dir = home_dir / ".mcl" / "staging"
     else:
         staging_dir = Path(staging_dir)
-    
+
     if not staging_dir.exists():
-        print("echo 'No tasks found - staging directory does not exist'", file=sys.stderr)
+        print(
+            "echo 'No tasks found - staging directory does not exist'", file=sys.stderr
+        )
         sys.exit(1)
-    
+
     # Find all directories in staging
     staged_dirs = []
     for item in staging_dir.iterdir():
         if item.is_dir():
             mtime = item.stat().st_mtime
-            staged_dirs.append({
-                'name': item.name,
-                'path': str(item),
-                'mtime': mtime
-            })
-    
+            staged_dirs.append({"name": item.name, "path": str(item), "mtime": mtime})
+
     if not staged_dirs:
         print("echo 'No tasks found'", file=sys.stderr)
         sys.exit(1)
-    
+
     # Sort by modification time (newest first)
-    staged_dirs.sort(key=lambda x: x['mtime'], reverse=True)
-    
+    staged_dirs.sort(key=lambda x: x["mtime"], reverse=True)
+
     try:
         index = int(selection) - 1
         if 0 <= index < len(staged_dirs):
             selected_dir = staged_dirs[index]
             # Output shell command to change directory - use proper shell escaping
             import shlex
+
             print(f"cd {shlex.quote(selected_dir['path'])}")
         else:
             print("echo 'Invalid selection'", file=sys.stderr)
@@ -551,7 +588,7 @@ def generate_shell_integration():
     """Generate shell integration code for bash/zsh."""
     # Get the absolute path to this script
     script_path = os.path.abspath(__file__)
-    
+
     shell_code = f'''
 # Multi-Claude (mcl) shell integration
 # Add this to your ~/.bashrc or ~/.zshrc: eval "$(python {script_path} shell-init)"
@@ -596,7 +633,7 @@ def cmd_start(args):
     """Handle the 'start' subcommand - create a new task workspace."""
     # Determine if we're working with a local repo or URL
     is_local = is_local_path(args.repo)
-    
+
     # Determine workspace directory
     if is_local:
         # For local repos, use staging directory (unless workspace explicitly overrides)
@@ -607,7 +644,7 @@ def cmd_start(args):
             home_dir = Path.home()
             default_staging = home_dir / ".mcl" / "staging"
             staging_dir = args.staging_dir or str(default_staging)
-            
+
             workspace_path = Path(staging_dir).resolve()
             workspace_path.mkdir(parents=True, exist_ok=True)
     else:
@@ -619,10 +656,10 @@ def cmd_start(args):
             home_dir = Path.home()
             default_staging = home_dir / ".mcl" / "staging"
             staging_dir = args.staging_dir or str(default_staging)
-            
+
             workspace_path = Path(staging_dir).resolve()
             workspace_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Process requirements first (needed for feature naming)
     if is_github_issue_url(args.requirements):
         print(f"Fetching GitHub issue: {args.requirements}")
@@ -638,29 +675,33 @@ def cmd_start(args):
             sys.exit(1)
     else:
         requirements = args.requirements
-    
+
     # Get repository name with feature summary and determine unique path
     repo_name = get_repo_name(args.repo)
     feature_repo_name = get_feature_repo_name(args.repo, requirements)
     base_repo_path = workspace_path / feature_repo_name
-    repo_path = get_unique_repo_path(base_repo_path) if not args.continue_branch and not args.no_clone else base_repo_path
-    
+    repo_path = (
+        get_unique_repo_path(base_repo_path)
+        if not args.continue_branch and not args.no_clone
+        else base_repo_path
+    )
+
     print("Setting up task workflow...")
     print(f"Repository: {args.repo}")
     print(f"Workspace: {workspace_path}")
     print(f"Repository path: {repo_path}")
     print(f"Feature directory: {feature_repo_name}")
-    
+
     # Generate branch name if not provided
     if args.branch:
         branch_name = args.branch
     else:
         # Create branch name from requirements (first few words, sanitized)
-        words = re.sub(r'[^\w\s]', '', requirements.split('\n')[0]).split()[:3]
+        words = re.sub(r"[^\w\s]", "", requirements.split("\n")[0]).split()[:3]
         branch_name = "feature/" + "-".join(words).lower()
-    
+
     print(f"Using branch: {branch_name}")
-    
+
     # Handle repository cloning/copying
     if not args.no_clone:
         if is_local:
@@ -670,9 +711,11 @@ def cmd_start(args):
                     print(f"Directory {repo_path} exists, using existing repository")
                 else:
                     print(f"Directory {repo_path} already exists. Will overwrite...")
-            
+
             if not args.continue_branch or not repo_path.exists():
-                copy_success = copy_local_repo(Path(args.repo).resolve(), repo_path, branch_name)
+                copy_success = copy_local_repo(
+                    Path(args.repo).resolve(), repo_path, branch_name
+                )
                 if not copy_success:
                     print("Failed to copy local repository")
                     sys.exit(1)
@@ -684,23 +727,27 @@ def cmd_start(args):
                 else:
                     # repo_path should already be unique from get_unique_repo_path above
                     print(f"Using unique directory path: {repo_path}")
-                    
+
             if not repo_path.exists():
                 # Extract just the directory name for the clone command
                 clone_dir_name = repo_path.name
-                clone_result = run_command(f"git clone {args.repo} {clone_dir_name}", cwd=workspace_path)
+                clone_result = run_command(
+                    f"git clone {args.repo} {clone_dir_name}", cwd=workspace_path
+                )
                 if clone_result is None:
                     print("Failed to clone repository")
                     sys.exit(1)
     else:
         if not repo_path.exists():
-            print(f"Repository path {repo_path} does not exist and --no-clone specified")
+            print(
+                f"Repository path {repo_path} does not exist and --no-clone specified"
+            )
             sys.exit(1)
-    
+
     # Handle branch creation/checkout (skip if worktree already created the branch)
     current_branch_result = run_command("git branch --show-current", cwd=repo_path)
     current_branch = current_branch_result.strip() if current_branch_result else ""
-    
+
     # Only handle branch operations if we're not already on the target branch
     # (worktrees automatically create and checkout the branch)
     if current_branch != branch_name:
@@ -710,19 +757,23 @@ def cmd_start(args):
             checkout_result = run_command(f"git checkout {branch_name}", cwd=repo_path)
             if checkout_result is None:
                 print(f"Branch '{branch_name}' not found, creating new branch...")
-                checkout_result = run_command(f"git checkout -b {branch_name}", cwd=repo_path)
+                checkout_result = run_command(
+                    f"git checkout -b {branch_name}", cwd=repo_path
+                )
                 if checkout_result is None:
                     print("Failed to create branch")
                     sys.exit(1)
         else:
             print(f"Creating new branch '{branch_name}'...")
-            checkout_result = run_command(f"git checkout -b {branch_name}", cwd=repo_path)
+            checkout_result = run_command(
+                f"git checkout -b {branch_name}", cwd=repo_path
+            )
             if checkout_result is None:
                 print("Failed to create branch")
                 sys.exit(1)
     else:
         print(f"Already on branch '{branch_name}'")
-    
+
     # Create or update TASK_MEMORY.md
     memory_file = os.path.join(repo_path, "TASK_MEMORY.md")
     if args.continue_branch and os.path.exists(memory_file):
@@ -731,29 +782,31 @@ def cmd_start(args):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         additional_content = f"\n\n## New Session - {timestamp}\n\n"
         if args.instructions:
-            additional_content += f"**Additional Instructions:** {args.instructions}\n\n"
+            additional_content += (
+                f"**Additional Instructions:** {args.instructions}\n\n"
+            )
         additional_content += f"**Requirements (refresher):**\n{requirements}\n\n"
         additional_content += f"- [{timestamp}] Resumed work on existing branch\n"
-        
-        with open(memory_file, 'a') as f:
+
+        with open(memory_file, "a") as f:
             f.write(additional_content)
     else:
         print("Creating TASK_MEMORY.md...")
         memory_file = create_task_memory(requirements, repo_path, branch_name)
-    
+
     # Note: TASK_MEMORY.md is excluded from git via .gitignore to keep task notes local
     print("TASK_MEMORY.md created (not committed - kept as local task notes)")
-    
-    print("\n" + "="*50)
+
+    print("\n" + "=" * 50)
     print("SETUP COMPLETE!")
-    print("="*50)
+    print("=" * 50)
     print(f"Repository cloned to: {repo_path}")
     print(f"Branch created: {branch_name}")
     print(f"Task memory file: {memory_file}")
-    
+
     if not args.no_claude:
         print("\nStarting Claude Code with initial prompt...")
-        
+
         # Create initial prompt for Claude
         if args.continue_branch:
             initial_prompt = f"""I'm continuing work on an existing task. Here's the current state:
@@ -763,13 +816,13 @@ def cmd_start(args):
 **Task Memory:** TASK_MEMORY.md (contains previous work and notes)
 
 Please start by reading the TASK_MEMORY.md file to understand the requirements and previous work done. The file has been updated with this new session."""
-            
+
             if args.instructions:
                 initial_prompt += f"""
 
 **Current Instructions:** 
 {args.instructions}"""
-            
+
             initial_prompt += f"""
 
 **Requirements (refresher):**
@@ -791,28 +844,30 @@ Please review the current state and continue working on the task!"""
    - Install dependencies: `pip install -r requirements.txt` (if requirements.txt exists)
 
 Please start by reading the TASK_MEMORY.md file to understand the requirements, then set up the development environment as needed, and begin working on the task. Remember to update TASK_MEMORY.md with your progress, decisions, and notes as you work."""
-            
+
             if args.instructions:
                 initial_prompt += f"""
 
 **Additional Instructions:** 
 {args.instructions}"""
-            
+
             initial_prompt += f"""
 
 **Requirements:**
 {requirements}
 
 Let's get started!"""
-        
+
         # Change to the repo directory and start Claude Code
         os.chdir(repo_path)
-        
+
         try:
             # Start Claude Code with the initial prompt
-            subprocess.run(['claude', initial_prompt], check=True)
+            subprocess.run(["claude", initial_prompt], check=True)
         except subprocess.CalledProcessError:
-            print("Failed to start Claude Code. Make sure 'claude' command is available.")
+            print(
+                "Failed to start Claude Code. Make sure 'claude' command is available."
+            )
             print("You can start it manually with: claude")
         except FileNotFoundError:
             print("Claude Code not found. Install it or start manually with: claude")
@@ -839,15 +894,13 @@ def cmd_cd(args):
     handle_cd_command(args.staging_dir, args.number)
 
 
-
-
 def main():
     """Main CLI entry point with subcommands."""
     parser = argparse.ArgumentParser(
-        prog='mcl',
-        description='Multi-Claude task management - work on multiple features simultaneously',
+        prog="mcl",
+        description="Multi-Claude task management - work on multiple features simultaneously",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+        epilog="""
 Examples:
   mcl start --repo https://github.com/user/repo --requirements "Add auth"
   mcl --repo https://github.com/user/repo --requirements "Add auth"  # (backwards compatible)
@@ -861,72 +914,126 @@ For shell integration, add this to your ~/.bashrc or ~/.zshrc:
 Then use:
   mcl_cd        # List tasks
   mcl_cd 1      # Change to task 1 (recommended)
-        '''
+        """,
     )
-    
+
     # Add backwards compatibility arguments to main parser
-    parser.add_argument('--repo', help='Repository URL to clone or local directory path')
-    parser.add_argument('--requirements', help='Requirements text, GitHub issue URL, or file path')
-    parser.add_argument('--branch', help='Branch name (auto-generated if not provided)')
-    parser.add_argument('--workspace', help='Workspace directory')
-    parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
-    parser.add_argument('--instructions', help='Additional instructions for Claude Code')
-    parser.add_argument('--continue-branch', action='store_true',
-                        help='Continue work on existing branch instead of creating new one')
-    parser.add_argument('--no-clone', action='store_true', help='Skip cloning (repo already exists)')
-    parser.add_argument('--no-claude', action='store_true', help='Skip starting Claude Code after setup')
-    
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
+    parser.add_argument(
+        "-r", "--repo", help="Repository URL to clone or local directory path"
+    )
+    parser.add_argument(
+        "-rq",
+        "--requirements",
+        help="Requirements text, GitHub issue URL, or file path",
+    )
+    parser.add_argument(
+        "-b", "--branch", help="Branch name (auto-generated if not provided)"
+    )
+    parser.add_argument("-w", "--workspace", help="Workspace directory")
+    parser.add_argument(
+        "-s", "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
+    )
+    parser.add_argument(
+        "-i", "--instructions", help="Additional instructions for Claude Code"
+    )
+    parser.add_argument(
+        "-c",
+        "--continue-branch",
+        action="store_true",
+        help="Continue work on existing branch instead of creating new one",
+    )
+    parser.add_argument(
+        "-nc",
+        "--no-clone",
+        action="store_true",
+        help="Skip cloning (repo already exists)",
+    )
+    parser.add_argument(
+        "-nd",
+        "--no-claude",
+        action="store_true",
+        help="Skip starting Claude Code after setup",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
     # Start subcommand
-    start_parser = subparsers.add_parser('start', help='Start a new task workspace')
-    start_parser.add_argument('--repo', required=True, 
-                             help='Repository URL to clone or local directory path')
-    start_parser.add_argument('--requirements', required=True,
-                             help='Requirements text, GitHub issue URL, or file path')
-    start_parser.add_argument('--branch', help='Branch name (auto-generated if not provided)')
-    start_parser.add_argument('--workspace', help='Workspace directory')
-    start_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
-    start_parser.add_argument('--instructions', help='Additional instructions for Claude Code')
-    start_parser.add_argument('--continue-branch', action='store_true',
-                             help='Continue work on existing branch instead of creating new one')
-    start_parser.add_argument('--no-clone', action='store_true', help='Skip cloning (repo already exists)')
-    start_parser.add_argument('--no-claude', action='store_true', help='Skip starting Claude Code after setup')
+    start_parser = subparsers.add_parser("start", help="Start a new task workspace")
+    start_parser.add_argument(
+        "--repo", required=True, help="Repository URL to clone or local directory path"
+    )
+    start_parser.add_argument(
+        "--requirements",
+        required=True,
+        help="Requirements text, GitHub issue URL, or file path",
+    )
+    start_parser.add_argument(
+        "--branch", help="Branch name (auto-generated if not provided)"
+    )
+    start_parser.add_argument("--workspace", help="Workspace directory")
+    start_parser.add_argument(
+        "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
+    )
+    start_parser.add_argument(
+        "--instructions", help="Additional instructions for Claude Code"
+    )
+    start_parser.add_argument(
+        "--continue-branch",
+        action="store_true",
+        help="Continue work on existing branch instead of creating new one",
+    )
+    start_parser.add_argument(
+        "--no-clone", action="store_true", help="Skip cloning (repo already exists)"
+    )
+    start_parser.add_argument(
+        "--no-claude", action="store_true", help="Skip starting Claude Code after setup"
+    )
     start_parser.set_defaults(func=cmd_start)
-    
+
     # ls subcommand (primary)
-    ls_parser = subparsers.add_parser('ls', help='List all staged tasks')
-    ls_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    ls_parser = subparsers.add_parser("ls", help="List all staged tasks")
+    ls_parser.add_argument(
+        "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
+    )
     ls_parser.set_defaults(func=cmd_list)
-    
+
     # list alias for backwards compatibility
-    list_parser = subparsers.add_parser('list', help='List all staged tasks (backwards compatibility alias for ls)')
-    list_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    list_parser = subparsers.add_parser(
+        "list", help="List all staged tasks (backwards compatibility alias for ls)"
+    )
+    list_parser.add_argument(
+        "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
+    )
     list_parser.set_defaults(func=cmd_list)
-    
+
     # Shell-init subcommand
-    shell_parser = subparsers.add_parser('shell-init', help='Output shell integration code for bash/zsh')
+    shell_parser = subparsers.add_parser(
+        "shell-init", help="Output shell integration code for bash/zsh"
+    )
     shell_parser.set_defaults(func=cmd_shell_init)
-    
+
     # CD subcommand (for shell integration)
-    cd_parser = subparsers.add_parser('cd', help='Output shell command to change directory to task N')
-    cd_parser.add_argument('number', help='Task number to change to')
-    cd_parser.add_argument('--staging-dir', help='Staging directory (default: ~/.mcl/staging)')
+    cd_parser = subparsers.add_parser(
+        "cd", help="Output shell command to change directory to task N"
+    )
+    cd_parser.add_argument("number", help="Task number to change to")
+    cd_parser.add_argument(
+        "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
+    )
     cd_parser.set_defaults(func=cmd_cd)
-    
-    
+
     args = parser.parse_args()
-    
+
     # Backwards compatibility: if no subcommand but --repo and --requirements are provided, assume 'start'
     if not args.command:
         if args.repo and args.requirements:
             # Redirect to start command
-            args.command = 'start'
+            args.command = "start"
             args.func = cmd_start
         else:
             parser.print_help()
             return
-    
+
     args.func(args)
 
 
