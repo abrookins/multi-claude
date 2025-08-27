@@ -21,6 +21,9 @@
       "WebFetch(domain:github.com)",
       "Bash(pytest:*)"
     ],
-    "deny": []
+    "deny": [],
+    "additionalDirectories": [
+      "/private/tmp"
+    ]
   }
 }
