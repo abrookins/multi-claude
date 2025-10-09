@@ -115,14 +115,15 @@ class TestManagerDaemon:
         
         # Check database entry
         conn = sqlite3.connect(daemon.db_path)
-        cursor = conn.execute("SELECT id, task_description, repo_path, status, priority, budget FROM agents WHERE id = ?", (agent_id,))
+        cursor = conn.execute("SELECT id, task_description, repo_path, status, agent_type, priority, budget FROM agents WHERE id = ?", (agent_id,))
         row = cursor.fetchone()
         assert row is not None
         assert row[1] == "Fix authentication bug"  # task_description
         assert row[2] == "/path/to/repo"  # repo_path
         assert row[3] == "active"  # status
-        assert row[4] == "high"  # priority
-        assert row[5] == 200  # budget
+        assert row[4] == "claude"  # agent_type (default)
+        assert row[5] == "high"  # priority
+        assert row[6] == 200  # budget
         conn.close()
     
     def test_get_active_agents_empty(self):
@@ -240,18 +241,19 @@ class TestManagerCommands:
         mock_daemon = Mock()
         mock_daemon.spawn_agent.return_value = ("test_agent_id", "test_session_id")
         mock_get_daemon.return_value = mock_daemon
-        
+
         args = Mock()
         args.manager_command = "add"
         args.task = "Fix bug"
         args.repo = "/test/repo"
         args.priority = "normal"
-        
+        args.agent = "claude"
+
         mcl.cmd_manager(args)
-        
+
         mock_print.assert_any_call("🚀 Starting manager daemon...")
-        mock_daemon.spawn_agent.assert_called_once_with("Fix bug", "/test/repo", "normal")
-        mock_print.assert_any_call("🤖 Task queued with agent test_agent_id")
+        mock_daemon.spawn_agent.assert_called_once_with("Fix bug", "/test/repo", "normal", agent_type="claude")
+        mock_print.assert_any_call("🤖 Task queued with Claude agent test_agent_id")
     
     @patch('mcl.get_manager_daemon')
     @patch('builtins.print')
