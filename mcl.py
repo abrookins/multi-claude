@@ -50,6 +50,37 @@ except ImportError:
     HAS_RICH = False
 
 
+def get_task_memory_path(base_path):
+    """Get the path for TASK_MEMORY.md with configurable base directory.
+    
+    Args:
+        base_path: The base path (repo_path or agent_dir)
+        
+    Returns:
+        Path to TASK_MEMORY.md file using configurable directory structure
+    """
+    # Get the configurable prefix directory from environment variable
+    prefix_dir = os.getenv("MULTI_CLAUDE_PREFIX_DIR")
+    
+    if prefix_dir:
+        # If prefix is set, create the full path with prefix
+        if prefix_dir.endswith('/'):
+            prefix_dir = prefix_dir.rstrip('/')
+        
+        # Handle case where prefix_dir is relative (like ".ai/")
+        if not os.path.isabs(prefix_dir):
+            task_memory_dir = os.path.join(base_path, prefix_dir)
+        else:
+            task_memory_dir = prefix_dir
+        
+        # Ensure the directory exists
+        os.makedirs(task_memory_dir, exist_ok=True)
+        return os.path.join(task_memory_dir, "TASK_MEMORY.md")
+    else:
+        # Default behavior: TASK_MEMORY.md directly in base_path
+        return os.path.join(base_path, "TASK_MEMORY.md")
+
+
 def run_command(cmd, cwd=None, capture_output=True):
     """Run a shell command and return the result."""
     try:
@@ -450,7 +481,7 @@ def create_task_memory(requirements, repo_path, branch_name):
 *This file serves as your working memory for this task. Keep it updated as you progress through the implementation.*
 """
 
-    memory_file = os.path.join(repo_path, "TASK_MEMORY.md")
+    memory_file = get_task_memory_path(repo_path)
     with open(memory_file, "w") as f:
         f.write(content)
 
@@ -1793,7 +1824,7 @@ def cmd_start(args):
         print(f"Already on branch '{branch_name}'")
 
     # Create or update TASK_MEMORY.md
-    memory_file = os.path.join(repo_path, "TASK_MEMORY.md")
+    memory_file = get_task_memory_path(repo_path)
     if args.continue_branch and os.path.exists(memory_file):
         print("TASK_MEMORY.md exists, updating with new session...")
         # Append new session info to existing file

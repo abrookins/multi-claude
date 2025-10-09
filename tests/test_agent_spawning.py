@@ -157,23 +157,10 @@ class TestAgentSpawning:
 class TestLLMEvaluation:
     """Test LLM-based evaluation system."""
     
-    @patch('anthropic.Anthropic')  # Assuming we'll use Anthropic SDK
-    def test_llm_evaluation_approval(self, mock_anthropic):
+    def test_llm_evaluation_approval(self):
         """Test LLM evaluation for tool approval."""
-        # Mock Anthropic client
-        mock_client = Mock()
-        mock_anthropic.return_value = mock_client
-        
-        # Mock LLM response approving the request
-        mock_response = Mock()
-        mock_response.content = [Mock()]
-        mock_response.content[0].text = json.dumps({
-            "decision": "approve",
-            "reasoning": "Reading configuration files is safe and necessary for the task",
-            "risk_level": "low",
-            "escalate": False
-        })
-        mock_client.messages.create.return_value = mock_response
+        # This test doesn't actually need anthropic, it's testing the evaluation logic
+        # In a real implementation, this would use an LLM client
         
         # This would be implemented in the manager
         def mock_llm_evaluate(task_description, tool_request, repo_path):

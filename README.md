@@ -477,6 +477,32 @@ Add user authentication with OAuth2 support
 - [2024-01-15 16:45:00] Resumed work on existing branch
 ```
 
+### Configurable Directory Structure
+
+By default, `TASK_MEMORY.md` is created directly in the repository root. You can configure this using the `MULTI_CLAUDE_PREFIX_DIR` environment variable:
+
+```bash
+# Store TASK_MEMORY.md in a .ai/ subdirectory
+export MULTI_CLAUDE_PREFIX_DIR=.ai/
+mcl start --repo https://github.com/user/repo --requirements "Add feature X"
+# Creates: repo/.ai/TASK_MEMORY.md
+
+# Store TASK_MEMORY.md in an absolute path location
+export MULTI_CLAUDE_PREFIX_DIR=/path/to/custom/location
+mcl start --repo https://github.com/user/repo --requirements "Add feature X"
+# Creates: /path/to/custom/location/TASK_MEMORY.md
+
+# Default behavior (no environment variable)
+mcl start --repo https://github.com/user/repo --requirements "Add feature X"
+# Creates: repo/TASK_MEMORY.md
+```
+
+This configuration affects:
+- Regular task workspaces created with `mcl start`
+- Manager agent workspaces created with `mcl manager add`
+
+The directory structure is automatically created if it doesn't exist.
+
 ## Claude Code Integration
 
 When the script launches Claude Code, it provides rich context that includes referencing the TASK_MEMORY.md file and any custom instructions you provded, e.g.:
