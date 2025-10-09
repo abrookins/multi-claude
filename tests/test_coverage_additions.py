@@ -116,13 +116,13 @@ class TestRichLibraryFallback:
 class TestHandleCdCommand:
     """Test handle_cd_command function."""
 
-    @patch('pathlib.Path.exists', return_value=False)
     @patch('sys.exit')
-    def test_handle_cd_no_staging_dir(self, mock_exit, mock_exists):
+    def test_handle_cd_no_staging_dir(self, mock_exit):
         """Test cd command when staging directory doesn't exist."""
         with patch('builtins.print'):
-            mcl.handle_cd_command(None, "1")
-            mock_exit.assert_called_once_with(1)
+            with patch('pathlib.Path.exists', return_value=False):
+                mcl.handle_cd_command(None, "1")
+                mock_exit.assert_called_once_with(1)
 
     @patch('pathlib.Path.iterdir')
     @patch('pathlib.Path.exists', return_value=True)
