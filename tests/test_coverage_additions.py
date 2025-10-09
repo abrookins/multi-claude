@@ -116,13 +116,14 @@ class TestRichLibraryFallback:
 class TestHandleCdCommand:
     """Test handle_cd_command function."""
 
-    @patch('sys.exit')
-    def test_handle_cd_no_staging_dir(self, mock_exit):
+    def test_handle_cd_no_staging_dir(self):
         """Test cd command when staging directory doesn't exist."""
+        # Use a non-existent path instead of mocking
+        nonexistent_path = "/tmp/definitely-does-not-exist-12345"
         with patch('builtins.print'):
-            with patch('pathlib.Path.exists', return_value=False):
-                mcl.handle_cd_command(None, "1")
-                mock_exit.assert_called_once_with(1)
+            with pytest.raises(SystemExit) as exc_info:
+                mcl.handle_cd_command(nonexistent_path, "1")
+            assert exc_info.value.code == 1
 
     @patch('pathlib.Path.iterdir')
     @patch('pathlib.Path.exists', return_value=True)
