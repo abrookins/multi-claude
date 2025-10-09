@@ -1,14 +1,14 @@
 [project]
 name = "multi-claude"
-version = "0.1.0"
-description = "Run multiple Claude Code instances in parallel"
+version = "0.2.0"
+description = "Run multiple coding agents (Claude, Auggie, etc.) in parallel"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     {name = "Andrew Brookins", email = "a.m.brookins@gmail.com"}
 ]
 license = {text = "MIT"}
-keywords = ["claude", "ai", "development", "automation"]
+keywords = ["claude", "auggie", "ai", "coding-agents", "development", "automation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -54,3 +54,6 @@ Repository = "https://github.com/abrookins/multi-claude"
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["mcl", "agents"]
