@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claude Task Setup Script
+Multi-Agent Task Setup Script
 
 This script automates the workflow of:
 1. Reading requirements from text input or GitHub issue URL
@@ -8,13 +8,14 @@ This script automates the workflow of:
 3. Creating a new branch
 4. Creating TASK_MEMORY.md with requirements and self-instructions (not committed to git)
 5. Setting up the workspace for development
+6. Launching a coding agent (Claude, Auggie, etc.)
 
 Note: TASK_MEMORY.md is excluded from version control via .gitignore to keep task notes local.
 
 Usage:
-    python gh_task_setup.py --repo <repo_url> --requirements <text_or_issue_url>
-    python gh_task_setup.py --repo https://github.com/user/repo --requirements "Add feature X"
-    python gh_task_setup.py --repo https://github.com/user/repo --requirements https://github.com/user/repo/issues/123
+    python mcl.py --repo <repo_url> --requirements <text_or_issue_url> [--agent <agent_type>]
+    python mcl.py --repo https://github.com/user/repo --requirements "Add feature X" --agent claude
+    python mcl.py --repo https://github.com/user/repo --requirements https://github.com/user/repo/issues/123 --agent auggie
 """
 
 import argparse
@@ -33,6 +34,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+
+# Import agent abstraction
+from agents import AgentFactory, AgentConfig
 
 # Optional dependencies for enhanced UX
 try:
@@ -636,8 +640,8 @@ fi'''
 
 # Manager functionality
 class ManagerDaemon:
-    """Daemon process that manages multiple Claude Code agents."""
-    
+    """Daemon process that manages multiple coding agents (Claude, Auggie, etc.)."""
+
     def __init__(self, manager_dir=None):
         self.manager_dir = Path(manager_dir or Path.home() / ".mcl" / "manager")
         self.agents_dir = self.manager_dir / "agents"
@@ -645,11 +649,11 @@ class ManagerDaemon:
         self.socket_path = "/tmp/mcl_manager.sock"
         self.state_file = self.manager_dir / "state.json"
         self.running = False
-        
+
         # Ensure directories exist
         self.manager_dir.mkdir(parents=True, exist_ok=True)
         self.agents_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize database
         self._init_db()
     
@@ -662,6 +666,7 @@ class ManagerDaemon:
                 task_description TEXT NOT NULL,
                 repo_path TEXT NOT NULL,
                 status TEXT NOT NULL,
+                agent_type TEXT DEFAULT 'claude',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 priority TEXT DEFAULT 'normal',
                 budget INTEGER DEFAULT 100
@@ -714,67 +719,47 @@ class ManagerDaemon:
         conn.commit()
         conn.close()
     
-    def spawn_agent(self, task_description, repo_path, priority="normal", budget=100):
-        """Spawn a new Claude Code agent for a task."""
+    def spawn_agent(self, task_description, repo_path, priority="normal", budget=100, agent_type="claude"):
+        """Spawn a new coding agent for a task."""
         # Validate inputs
         if task_description is None:
             raise TypeError("Task description cannot be None")
         if not task_description or not task_description.strip():
             raise ValueError("Task description cannot be empty")
-        
+
+        # Validate agent type
+        available_agents = AgentFactory.get_available_agents()
+        if agent_type not in available_agents:
+            raise ValueError(f"Unknown agent type: {agent_type}. Available: {', '.join(available_agents)}")
+
         agent_id = str(uuid.uuid4())[:8]
         agent_dir = self.agents_dir / agent_id
         agent_dir.mkdir(exist_ok=True)
-        
-        # Create task memory file
+
+        # Create agent configuration
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        task_memory_content = f"""# Task Memory - Agent {agent_id}
+        config = AgentConfig(
+            agent_id=agent_id,
+            task_description=task_description,
+            repo_path=repo_path,
+            agent_dir=agent_dir,
+            priority=priority,
+            budget=budget
+        )
 
-**Created:** {timestamp}
-**Priority:** {priority}
-**Budget:** ${budget}
-**Repository:** {repo_path}
+        # Create agent instance and task memory
+        agent = AgentFactory.create_agent(agent_type, config)
+        agent.create_task_memory(timestamp)
 
-## Task Description
-
-{task_description}
-
-## Manager Context
-
-This agent is running under manager supervision:
-- Auto-approval enabled for low-risk operations
-- Manager will evaluate tool requests before execution
-- Escalation triggers: high cost operations, destructive changes, external API calls
-
-## Progress
-
-- [ ] Initial codebase analysis
-- [ ] Implementation planning  
-- [ ] Code changes
-- [ ] Testing verification
-
-## Work Log
-
-- [{timestamp}] Agent spawned under manager supervision
-
----
-
-*This agent is managed by the mcl manager daemon. All tool requests are evaluated before execution.*
-"""
-        
-        task_memory_path = agent_dir / "TASK_MEMORY.md"
-        with open(task_memory_path, "w") as f:
-            f.write(task_memory_content)
-        
         # Store agent in database
         conn = sqlite3.connect(self.db_path)
         conn.execute(
-            "INSERT INTO agents (id, task_description, repo_path, status, priority, budget) VALUES (?, ?, ?, ?, ?, ?)",
-            (agent_id, task_description, repo_path, "active", priority, budget)
+            "INSERT INTO agents (id, task_description, repo_path, status, agent_type, priority, budget) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (agent_id, task_description, repo_path, "active", agent_type, priority, budget)
         )
         conn.commit()
         conn.close()
-        
+
         # Initialize logging for this agent
         session_id = f"session_{int(time.time())}"
         self.log_interaction(
@@ -787,11 +772,12 @@ This agent is running under manager supervision:
                 "repo_path": repo_path,
                 "priority": priority,
                 "budget": budget,
+                "agent_type": agent_type,
                 "agent_dir": str(agent_dir)
             }
         )
-        
-        print(f"✅ Agent {agent_id} spawned for task: {task_description[:50]}...")
+
+        print(f"✅ {agent_type.capitalize()} agent {agent_id} spawned for task: {task_description[:50]}...")
         return agent_id, session_id
     
     def get_active_agents(self):
@@ -1366,16 +1352,18 @@ def cmd_manager(args):
         task_description = args.task
         repo_path = args.repo
         priority = getattr(args, 'priority', 'normal')
-        
+        # Handle case where subparser's --agent might be None (not specified)
+        agent_type = args.agent if args.agent is not None else 'claude'
+
         if not is_manager_running():
             # Auto-start manager if not running
             print("🚀 Starting manager daemon...")
             daemon = get_manager_daemon()
         else:
             daemon = get_manager_daemon()
-        
-        agent_id, session_id = daemon.spawn_agent(task_description, repo_path, priority)
-        print(f"🤖 Task queued with agent {agent_id}")
+
+        agent_id, session_id = daemon.spawn_agent(task_description, repo_path, priority, agent_type=agent_type)
+        print(f"🤖 Task queued with {agent_type.capitalize()} agent {agent_id}")
         
     elif args.manager_command == "status":
         daemon = get_manager_daemon()
@@ -1834,77 +1822,45 @@ def cmd_start(args):
     print(f"Branch created: {branch_name}")
     print(f"Task memory file: {memory_file}")
 
-    if not args.no_claude:
-        print("\nStarting Claude Code with initial prompt...")
+    if not args.no_agent:
+        # Determine which agent to use
+        # Handle case where subparser's --agent might be None (not specified)
+        agent_type = args.agent if args.agent is not None else 'claude'
+        print(f"\nStarting {agent_type.capitalize()} agent with initial prompt...")
 
-        # Create initial prompt for Claude
-        if args.continue_branch:
-            initial_prompt = f"""I'm continuing work on an existing task. Here's the current state:
+        # Create agent configuration
+        agent_id = f"standalone_{int(time.time())}"
+        agent_dir = Path(repo_path)
 
-**Repository:** {repo_name}
-**Branch:** {branch_name} (existing branch)
-**Task Memory:** TASK_MEMORY.md (contains previous work and notes)
+        config = AgentConfig(
+            agent_id=agent_id,
+            task_description=requirements,
+            repo_path=repo_path,
+            agent_dir=agent_dir,
+            additional_instructions=args.instructions if hasattr(args, 'instructions') else None
+        )
 
-Please start by reading the TASK_MEMORY.md file to understand the requirements and previous work done. The file has been updated with this new session."""
-
-            if args.instructions:
-                initial_prompt += f"""
-
-**Current Instructions:** 
-{args.instructions}"""
-
-            initial_prompt += f"""
-
-**Requirements (refresher):**
-{requirements}
-
-Please review the current state and continue working on the task!"""
-        else:
-            initial_prompt = f"""I've set up a new task workspace for you. Here's what's been prepared:
-
-**Repository:** {repo_name}
-**Branch:** {branch_name} (new branch)
-**Task Memory:** TASK_MEMORY.md (contains requirements and notes)
-
-**Important:** If this is a Python project, you should set up a virtual environment before starting work:
-1. Check the README or setup documentation for specific virtualenv instructions
-2. If no specific instructions exist, create a standard virtual environment:
-   - `python -m venv venv` (or `python3 -m venv venv`)
-   - Activate it: `source venv/bin/activate` (Linux/Mac) or `venv\\Scripts\\activate` (Windows)
-   - Install dependencies: `pip install -r requirements.txt` (if requirements.txt exists)
-
-Please start by reading the TASK_MEMORY.md file to understand the requirements, then set up the development environment as needed, and begin working on the task. Remember to update TASK_MEMORY.md with your progress, decisions, and notes as you work."""
-
-            if args.instructions:
-                initial_prompt += f"""
-
-**Additional Instructions:** 
-{args.instructions}"""
-
-            initial_prompt += f"""
-
-**Requirements:**
-{requirements}
-
-Let's get started!"""
-
-        # Change to the repo directory and start Claude Code
-        os.chdir(repo_path)
-
+        # Create and spawn agent
         try:
-            # Start Claude Code with the initial prompt
-            subprocess.run(["claude", initial_prompt], check=True)
-        except subprocess.CalledProcessError:
-            print(
-                "Failed to start Claude Code. Make sure 'claude' command is available."
-            )
-            print("You can start it manually with: claude")
-        except FileNotFoundError:
-            print("Claude Code not found. Install it or start manually with: claude")
+            agent = AgentFactory.create_agent(agent_type, config)
+            success = agent.spawn()
+
+            if not success:
+                print(f"\nFailed to start {agent_type.capitalize()} agent.")
+                print(f"You can start it manually with: {agent.get_command_name()}")
+        except ValueError as e:
+            print(f"\n❌ Error: {e}")
+            available = AgentFactory.get_available_agents()
+            print(f"Available agents: {', '.join(available)}")
+        except Exception as e:
+            print(f"\n❌ Unexpected error spawning agent: {e}")
     else:
+        # Handle case where subparser's --agent might be None (not specified)
+        agent_type = args.agent if args.agent is not None else 'claude'
+        agent_cmd = agent_type
         print("\nNext steps:")
         print(f"1. cd {repo_path}")
-        print("2. Start Claude Code: claude")
+        print(f"2. Start {agent_type.capitalize()} agent: {agent_cmd}")
         print("3. Read TASK_MEMORY.md and begin working")
         print("4. Update TASK_MEMORY.md as you progress")
 
@@ -1964,7 +1920,13 @@ Then use:
         "-s", "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
     )
     parser.add_argument(
-        "-i", "--instructions", help="Additional instructions for Claude Code"
+        "-i", "--instructions", help="Additional instructions for the coding agent"
+    )
+    parser.add_argument(
+        "-a", "--agent",
+        choices=AgentFactory.get_available_agents(),
+        default="claude",
+        help="Coding agent to use (default: claude)"
     )
     parser.add_argument(
         "-c",
@@ -1980,9 +1942,9 @@ Then use:
     )
     parser.add_argument(
         "-nd",
-        "--no-claude",
+        "--no-agent",
         action="store_true",
-        help="Skip starting Claude Code after setup",
+        help="Skip starting coding agent after setup",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -2005,8 +1967,9 @@ Then use:
         "--staging-dir", help="Staging directory (default: ~/.mcl/staging)"
     )
     start_parser.add_argument(
-        "--instructions", help="Additional instructions for Claude Code"
+        "--instructions", help="Additional instructions for the coding agent"
     )
+    # Note: --agent is inherited from parent parser
     start_parser.add_argument(
         "--continue-branch",
         action="store_true",
@@ -2016,7 +1979,7 @@ Then use:
         "--no-clone", action="store_true", help="Skip cloning (repo already exists)"
     )
     start_parser.add_argument(
-        "--no-claude", action="store_true", help="Skip starting Claude Code after setup"
+        "--no-agent", action="store_true", help="Skip starting coding agent after setup"
     )
     start_parser.set_defaults(func=cmd_start)
 
@@ -2067,6 +2030,7 @@ Then use:
     manager_add_parser.add_argument("--repo", required=True, help="Repository path")
     manager_add_parser.add_argument("--priority", choices=["low", "normal", "high"], default="normal", help="Task priority")
     manager_add_parser.add_argument("--budget", type=int, default=100, help="Budget limit for task")
+    # Note: --agent is inherited from parent parser
     manager_add_parser.set_defaults(func=cmd_manager)
     
     # manager status
